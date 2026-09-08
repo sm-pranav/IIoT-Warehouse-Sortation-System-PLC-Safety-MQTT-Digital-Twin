@@ -55,3 +55,84 @@ Sortation changes one mixed flow of loads into several sorted flows. It can sit 
 - **One data contract.** Everything shared between layers passes through one 32-byte data block at fixed byte offsets. It is documented once and must match everywhere, preventing different layers from interpreting data differently.
 - **No load is released blind.** The sorter asks downstream equipment for permission before diverting. This protects equipment and product flow; it is a process interlock, not a substitute for people safety.
 
+## 2. Lifecycle position of this document
+
+The project follows the order used by a real engineering job, with this specification at the front. Writing it first settles decisions—such as where safety belongs, what stops the belt, and how an interlock behaves—before those decisions become PLC code or wiring.
+
+| Phase | What was produced | Where it is |
+|:--|:--|:--|
+| **Detailed design** | I/O list, wiring diagram, terminal schedule, device list, safety architecture, this specification | `electrical/`, this document |
+| **Implementation** | S7-1200 program (LAD + SCL), gateway, dashboard | `code/` |
+| **Testing** | Acceptance criteria, exercised by forcing inputs in PLCSIM | section 12 |
+| **Maintenance / operation support** | Start-up and shutdown procedure, alarm response, troubleshooting, maintenance schedule | section 13 |
+
+This order does not certify a physical system. For real work, qualified engineers must verify the design, installation, testing, standards compliance, and site conditions.
+
+## 3. Architecture
+
+```
+   Control layer        S7-1200 program (LAD + SCL) running in S7-PLCSIM
+                        All control logic and all KPI maths. Writes DB1.
+                                 |
+                                 |  S7 protocol, TCP 102
+                                 v
+   Edge layer           iot_gateway.py  (python-snap7)
+                        Reads 32 bytes from DB1 every 2 s, builds JSON,
+                        publishes over MQTT. Writes command bits back.
+                                 |
+                                 |  MQTT  (Wi-Fi in a real deployment)
+                                 v
+   Monitoring layer     MQTT broker  ->  dashboard.html in a browser
+                        Live figures, alarms, 2D digital twin, commands.
+```
+
+The three layers are arranged like a typical plant system: deterministic control at the bottom, an edge device that speaks both communication protocols in the middle, and supervisory monitoring on top. **Deterministic** here means the PLC performs the same control task predictably each scan.
+
+**Digital twin / CPS framing.** The dashboard displays a live 2D model of the sortation line and downstream AGV. Each display element is driven by the PLC's data, so the model follows the simulated machine. Together they form a small **cyber-physical system (CPS)**: PLC and I/O are the physical side, the screen model is the cyber side, and MQTT keeps them in step. In a plant installation, this connection would run wirelessly over Wi-Fi from the panel to the plant network, avoiding a new cable run. This communication is for monitoring and commands, not a certified safety channel.
+
+## 4. I/O summary
+
+Full device-tag, terminal, and wire-number detail is in `electrical/electrical_design.md`. **I/O** means the input and output signals by which the PLC reads the machine and commands it.
+
+| Address | Tag | Type | Description |
+|:--|:--|:--|:--|
+| I0.0 | `Start_Button` | DI | Start pushbutton |
+| I0.1 | `Stop_Button` | DI | Stop pushbutton (process stop) |
+| I0.2 | `E_Stop` | DI | Safety circuit healthy monitor. 1 = healthy |
+| I0.3 | `Sensor_Entry` | DI | Load entering the sorter |
+| I0.4 | `Sensor_Class1` | DI | Destination class 1 (small) |
+| I0.5 | `Sensor_Class2` | DI | Destination class 2 (medium) |
+| I0.6 | `Sensor_Class3` | DI | Destination class 3 (large) |
+| I0.7 | `Jam_Sensor` | DI | Photo-eye at the divert junction |
+| I1.0 | `VFD_Fault` | DI | Inverter fault. 1 = drive tripped |
+| I1.1 | `Downstream_Ready` | DI | Handshake from the downstream transport. 1 = ready |
+| Q0.0 | `Conveyor_Motor` | DQ | Internal belt-run state; run lamp and line permissive |
+| Q0.1 | `Diverter_Lane1` | DQ | Diverter, lane 1 |
+| Q0.2 | `Diverter_Lane2` | DQ | Diverter, lane 2 |
+| Q0.3 | `Diverter_Lane3` | DQ | Diverter, lane 3 |
+| Q0.4 | `Alarm_Beacon` | DQ | Beacon, flashes at 1 Hz on alarm |
+| Q0.5 | `Alarm_Horn` | DQ | Horn, steady on alarm |
+| Q0.6 | `VFD_Run` | DQ | Run command to the inverter |
+| IW64 | `Speed_Setpoint` | AI | Speed potentiometer, 0–27648 = 0–10 V |
+| QW80 | `VFD_Speed_Ref` | AQ | Inverter speed reference, 0–27648 = 0–10 V |
+| M0.0 | `Mode_Auto` | M | AUTO mode bit |
+| M0.1 | `Mode_Manual` | M | MANUAL mode bit |
+| M0.2 | `Mode_Fault` | M | FAULT mode bit |
+| M10.5 | `Clock_1Hz` | M | 1 Hz clock from clock memory byte MB10 |
+
+DI/DQ mean digital input/output: an on-or-off signal. AI/AQ mean analogue input/output: a value across a range. `M` is internal PLC memory.
+
+### 4.1 Program blocks
+
+| Block | Language | Role |
+|:--|:--|:--|
+| OB1 Main | LAD | Calls FB1, FB2, FB3, FB4 every scan |
+| FB1 `ConveyorControl` | LAD | Belt latch, mode selection, speed reference, VFD run, beacon and horn |
+| FB2 `SortingLogic` | LAD | Object-present bit, downstream interlock, three 2 s diverter pulses |
+| FB3 `ProductionCounter` | SCL | Counts, rejects, throughput, OEE, uptime, speed %, mode integer |
+| FB4 `AlarmHandler` | SCL | E-Stop, jam, sensor conflict, inverter fault, alarm code |
+| DB1 `ConveyorData` | data | Shared data block, non-optimized, 32 bytes |
+
+**LAD** (Ladder) is a graphical PLC language shaped like relay circuits, making on/off interlocks easy for an electrician to follow. **SCL** (Structured Control Language, a Structured Text form) is better for arithmetic, counting, and KPI mathematics. This division is made for readability and maintenance, not as a safety function.
+
+## 5. Shared data block DB1
