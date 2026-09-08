@@ -136,3 +136,54 @@ DI/DQ mean digital input/output: an on-or-off signal. AI/AQ mean analogue input/
 **LAD** (Ladder) is a graphical PLC language shaped like relay circuits, making on/off interlocks easy for an electrician to follow. **SCL** (Structured Control Language, a Structured Text form) is better for arithmetic, counting, and KPI mathematics. This division is made for readability and maintenance, not as a safety function.
 
 ## 5. Shared data block DB1
+
+DB1 `ConveyorData` is **32 bytes** and must use **non-optimized (standard) block access**. The gateway reads fixed byte offsets, so only the classic predictable layout works. The variable order is fixed and is the shared data contract.
+
+| Offset | Name | Type | Written by | Description |
+|:--|:--|:--|:--|:--|
+| 0 | `Total_Count` | Int | PLC | All sorted loads |
+| 2 | `Lane1_Count` | Int | PLC | Class 1 → lane 1 |
+| 4 | `Lane2_Count` | Int | PLC | Class 2 → lane 2 |
+| 6 | `Lane3_Count` | Int | PLC | Class 3 → lane 3 |
+| 8 | `Reject_Count` | Int | PLC | Entered but never sorted |
+| 10 | `OEE` | Real | PLC | Overall equipment effectiveness, % |
+| 14 | `Throughput` | Real | PLC | Loads per minute |
+| 18 | `Uptime_Seconds` | DInt | PLC | Seconds the belt has run |
+| 22 | `Speed_Actual` | Int | PLC | Belt speed, 0–100 % |
+| 24 | `Mode` | Int | PLC | 0 STOP, 1 AUTO, 2 MANUAL, 3 FAULT |
+| 26.0 | `Motor_Running` | Bool | PLC | Belt running |
+| 26.1 | `Alarm_Active` | Bool | PLC | Master alarm flag |
+| 26.2 | `Jam_Detected` | Bool | PLC | Jam timer elapsed |
+| 26.3 | `System_Running` | Bool | PLC | System running |
+| 26.4 | `Sorting_Small` | Bool | PLC | Diverter 1 active |
+| 26.5 | `Sorting_Medium` | Bool | PLC | Diverter 2 active |
+| 26.6 | `Sorting_Large` | Bool | PLC | Diverter 3 active |
+| 26.7 | `EStop_Active` | Bool | PLC | Emergency stop active |
+| 27.0 | `Object_Present` | Bool | PLC | Load at the entry sensor |
+| 27.1 | `VFD_Fault` | Bool | PLC | Inverter fault active |
+| 27.2 | `Interlock_Hold` | Bool | PLC | Load ready to divert, downstream not ready |
+| 27.3 | `Downstream_Ready` | Bool | PLC | Mirror of the ready handshake, for display |
+| 28 | `Active_Alarm_Code` | Int | PLC | 0 none, 1 E-Stop, 2 jam, 3 sensor fault, 4 VFD fault |
+| 30.0 | `Cmd_Start` | Bool | gateway | Remote start |
+| 30.1 | `Cmd_Stop` | Bool | gateway | Remote stop |
+| 30.2 | `Cmd_Reset` | Bool | gateway | Reset counters |
+| 30.3 | `Cmd_Mode_Auto` | Bool | gateway | Select AUTO |
+| 30.4 | `Cmd_Mode_Manual` | Bool | gateway | Select MANUAL |
+| 30.5 | `Cmd_Downstream_Ready` | Bool | gateway | Simulated downstream ready, for demonstration |
+
+Bits 27.4–27.7 and 30.6–30.7 are spare, as is byte 31. Total size remains 32 bytes. `Int`, `DInt`, `Real`, and `Bool` are PLC data types: integer, double integer, floating-point number, and true/false respectively.
+
+## 6. Operating modes
+
+The machine is always in exactly one mode; `Mode` in DB1 carries its number.
+
+| Mode | Value | Entered when | Behaviour |
+|:--|:--|:--|:--|
+| STOP | 0 | Power-up, or stop pressed, or no mode selected | Belt stopped, no diverting, no alarms |
+| AUTO | 1 | `Cmd_Mode_Auto` while healthy | Belt runs, sorting runs automatically on the class sensors, interlock enforced |
+| MANUAL | 2 | `Cmd_Mode_Manual` while healthy | Belt runs, intended for commissioning and clearing loads. Selecting MANUAL clears AUTO |
+| FAULT | 3 | Any alarm active | Overrides every other mode. Belt command dropped, diverting stopped, beacon flashing |
+
+FAULT overrides AUTO and MANUAL, preventing a contradictory running-and-faulted state. Selecting AUTO clears MANUAL and selecting MANUAL clears AUTO, so only one is active. Manual mode is described for commissioning/clearing loads in the simulation; it is not approval for a person to work near a real moving machine.
+
+## 7. Sequence of operation
