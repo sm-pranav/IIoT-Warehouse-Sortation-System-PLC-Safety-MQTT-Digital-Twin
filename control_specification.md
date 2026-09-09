@@ -256,3 +256,48 @@ FB3 calculates these values in the PLC, so numbers remain available even if the 
 Every division is guarded: a zero denominator gives 0.0, except quality gives 1.0 before any load has been handled. These deliberately simple formulas are further limited in section 14.
 
 ## 9. Alarm list
+
+| Code | Alarm | Trigger | Delay | Effect | Reset |
+|:--|:--|:--|:--|:--|:--|
+| 0 | No alarm | — | — | — | — |
+| 1 | Emergency stop | Safety monitor `I0.2` goes low (button pressed, wire broken, or relay dropped) | None | Hardware removes motion; PLC drops the belt command, beacon flashes | Release `-S1`, press the monitored reset. Alarm self-clears when the circuit is healthy |
+| 2 | Conveyor jam | `Jam_Sensor` `I0.7` blocked continuously | **5 s** | Belt command drops, sorting stops, beacon flashes | Clear the blockage; self-clears |
+| 3 | Sensor fault | Two or more class sensors on at once — impossible for one load | None | Belt command drops, sorting stops, beacon flashes | Correct the sensor; self-clears |
+| 4 | Inverter fault | `VFD_Fault` `I1.0` goes high | None | Belt command drops, sorting stops, beacon flashes | Clear the drive trip; self-clears when `I1.0` goes low |
+
+The priority order is 1, 2, 3, 4. Emergency stop wins because an operator needs to see that condition named first. `Active_Alarm_Code` carries the highest-priority active condition, while `Alarm_Active` is the OR of all alarm conditions.
+
+The 5 s jam delay prevents false alarms: a normal passing load blocks the photo-eye briefly every cycle, whereas a jam remains in front of it. Alarm code 1 reports safety-chain status to the PLC; the physical hardware is what provides the actual safety stop.
+
+## 10. Interlocks
+
+An **interlock** is a required condition before an action is allowed. This machine uses four:
+
+| # | Interlock | Rule | Why |
+|:--|:--|:--|:--|
+| 1 | **Downstream equipment** | A diverter may not pulse unless `Downstream_Ready` (`I1.1`) or `Cmd_Downstream_Ready` (30.5) is true. Otherwise `Interlock_Hold` is set and the load is held | Prevents pushing a load into empty space or into a vehicle that has not arrived or is still moving |
+| 2 | **Belt running** | Diverters are inhibited unless the belt-run state is true | Diverting onto a stationary belt jams the lane |
+| 3 | **Alarm** | The master alarm flag is a normally-closed contact in the belt rung | One rule for every fault: if anything is wrong, the belt stops |
+| 4 | **Mode exclusivity** | Selecting AUTO resets MANUAL and vice versa; FAULT overrides both | Prevents contradictory states |
+
+Interlock 1 is the main demonstration in this project. `electrical/electrical_design.md` section 9.4 explains its hazard and how a larger system would add a four-signal handshake with a timeout.
+
+**Category.** All four are PLC **process interlocks**. They protect equipment and product flow. They sit beside, and never replace, the hardware people-safety chain in section 11. A real installation needs a qualified safety engineer to determine which transfer hazards must use safety-rated systems.
+
+## 11. Safety
+
+> **Safety boundary.** This learning/design document does not certify a safety function and must not be used alone to build or commission real machinery. Process stop, jam logic, sensor logic, and dashboard commands are not people-safety functions. Any physical system needs an appropriate risk assessment, safety calculations, validation, formal testing, and sign-off by competent qualified engineers.
+
+Full analysis, including the stop-category matrix and standards framing, is in `electrical/electrical_design.md` section 9. The design summary is:
+
+- **`-S1` emergency stop is wired normally closed.** A pressed button, cut wire, or loose terminal all produce a stop. The failure direction is therefore safe.
+- **Two NC positive-opening contacts** feed two independent, cross-monitored channels into safety relay **`-K0`**.
+- **`-K0` removes drive STO** (Safe Torque Off), so the motor can produce no torque in hardware. It also **drops contactor `-K9`**, whose poles are in series with all three diverter solenoids, so nothing can push.
+- **Reset is monitored and manual.** Releasing the emergency stop does not restart the machine.
+- **The PLC is not part of the safety function.** It reads `-K0` auxiliary contact `I0.2` for indication, alarm, and belt-command behaviour. That is process behaviour, not safety.
+- **Framed to IEC 60204-1** (stop functions, stop categories, isolator, emergency stop) **and ISO 13849-1** (architecture intended to satisfy Category 3).
+- **Stated limitation:** quantified performance level has not been calculated or verified. A competent safety engineer must complete that work before any real build.
+
+Stop categories used are **category 0** for the emergency stop (immediate removal of power to motion) and **category 2** controlled stop for jams, sensor faults, inverter faults, and the process stop. These descriptions explain the design intent only; they are not instructions to install, alter, validate, or bypass safety circuits.
+
+## 12. Acceptance criteria
