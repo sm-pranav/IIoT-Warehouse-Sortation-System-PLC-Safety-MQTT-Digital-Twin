@@ -232,3 +232,27 @@ If a load trips `Sensor_Entry` but no diverter fires within **3 seconds**, `Reje
 Any alarm sets the master alarm flag. Its normally closed contact in the belt rung stops the belt. The beacon uses the 1 Hz clock bit and **flashes**; the horn has no clock contact and stays **steady**. `Mode` becomes 3 (FAULT). Alarms are self-clearing when their physical condition goes away. `Cmd_Reset` resets production counters, not live alarms.
 
 ## 8. Production counting and KPIs
+
+FB3 calculates these values in the PLC, so numbers remain available even if the monitoring layer is not running. A KPI is a **key performance indicator**, a measurement used to understand production performance.
+
+| Value | How it is calculated | Notes |
+|:--|:--|:--|
+| Lane counts | Rising edge of each diverter pulse, +1 | One count per load, even though the pulse lasts 2 s |
+| `Total_Count` | Sum of the three lane counts | — |
+| `Reject_Count` | Rising edge of the 3 s reject timer | Entered but never sorted |
+| `Uptime_Seconds` | +1 per second while the belt runs | Driven by the 1 Hz clock bit |
+| `Speed_Actual` | `Speed_Setpoint` × 100 / 27648 | Raw analogue count to 0–100 % |
+| `Throughput` | `Total_Count` / run seconds × 60 | Loads per minute, guarded against divide-by-zero |
+| `OEE` | Availability × Performance × Quality × 100 | See below |
+
+**OEE** (Overall Equipment Effectiveness) combines three kinds of production loss into one percentage.
+
+| Factor | Formula here | What loss it exposes |
+|:--|:--|:--|
+| Availability | run seconds / enabled seconds | Downtime |
+| Performance | (loads / run seconds) ÷ 0.5, clamped to 1.0 | Running slower than the ideal rate. 0.5 loads/s = one every 2 s = 30 per minute |
+| Quality | total / (total + rejects) | Loads that were not handled correctly |
+
+Every division is guarded: a zero denominator gives 0.0, except quality gives 1.0 before any load has been handled. These deliberately simple formulas are further limited in section 14.
+
+## 9. Alarm list
