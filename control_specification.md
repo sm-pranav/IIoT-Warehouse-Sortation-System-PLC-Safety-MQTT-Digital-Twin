@@ -187,3 +187,48 @@ The machine is always in exactly one mode; `Mode` in DB1 carries its number.
 FAULT overrides AUTO and MANUAL, preventing a contradictory running-and-faulted state. Selecting AUTO clears MANUAL and selecting MANUAL clears AUTO, so only one is active. Manual mode is described for commissioning/clearing loads in the simulation; it is not approval for a person to work near a real moving machine.
 
 ## 7. Sequence of operation
+
+### 7.1 Start-up
+
+| Step | Condition | Action |
+|:--|:--|:--|
+| 1 | Safety circuit healthy (`I0.2` = 1), no alarm active | Machine may be started |
+| 2 | `Start_Button` (`I0.0`) or `Cmd_Start` pulsed | Belt latches on. `Q0.0` and `Q0.6` go true |
+| 3 | Start released | Belt stays running through its own seal-in contact |
+| 4 | Belt running | `QW80` follows `IW64`, so the drive follows the speed potentiometer |
+| 5 | Belt stopped | `QW80` forced to 0, so the drive cannot creep |
+
+A latch (also called a seal-in) uses the belt's own contact to keep a momentary start request active. It has a parallel start branch—start button OR seal-in OR remote start—then four normally closed stop conditions in series: stop button, safety monitor, master alarm, and remote stop. Any stop condition opens the rung. The belt output turns off, its seal-in opens, and it stays off. This is process-control behaviour; the hardware safety chain independently removes hazardous motion.
+
+### 7.2 Sorting one load — the core sequence
+
+| Step | Condition | Action | Notes |
+|:--|:--|:--|:--|
+| 1 | Load breaks `Sensor_Entry` (`I0.3`) | `Object_Present` (27.0) set | Also starts the 3 s reject watchdog |
+| 2 | Load breaks one class sensor (`I0.4` / `I0.5` / `I0.6`) | Destination class identified | Belt must be running; diverters are inhibited when it is not |
+| 3 | Downstream ready? `I1.1` **or** `Cmd_Downstream_Ready` true | Permission granted, go to step 4 | This is the equipment interlock |
+| 3a | Downstream **not** ready | `Interlock_Hold` (27.2) set. No diverter pulse. Load held on the belt | Published to the HMI and dashboard so the operator sees why |
+| 3b | Downstream becomes ready | `Interlock_Hold` cleared, go to step 4 | Held load is then diverted |
+| 4 | Permission granted | Matching diverter pulses for **2 s** (pulse timer) | A fixed pulse, because the sensor only sees the load for an instant |
+| 5 | Diverter pulse rises | Lane counter +1, `Total_Count` recalculated | Counted on the rising edge, so exactly one per load |
+| 6 | Diverter pulse ends | Diverter retracts, ready for the next load | — |
+
+A rising edge is the single instant a signal changes from off to on. Counting at that instant prevents a two-second output pulse from creating many counts. The equipment interlock protects flow and equipment; it is not a people-protection device.
+
+### 7.3 Reject handling
+
+If a load trips `Sensor_Entry` but no diverter fires within **3 seconds**, `Reject_Count` increments. This covers a load that no class sensor recognised, making the missed classification visible rather than silently losing it. A reject is a count, not an alarm, so the machine keeps running.
+
+### 7.4 Shutdown
+
+| Step | Condition | Action |
+|:--|:--|:--|
+| 1 | `Stop_Button` (`I0.1`) or `Cmd_Stop` pulsed | Belt latch breaks, `Q0.0` and `Q0.6` drop, `QW80` forced to 0 |
+| 2 | Belt stopped | Diverting inhibited. Counters and KPIs retained |
+| 3 | Emergency stop pressed | Hardware chain acts: STO removed, diverter power dropped. PLC raises alarm code 1 |
+
+### 7.5 Alarm behaviour
+
+Any alarm sets the master alarm flag. Its normally closed contact in the belt rung stops the belt. The beacon uses the 1 Hz clock bit and **flashes**; the horn has no clock contact and stays **steady**. `Mode` becomes 3 (FAULT). Alarms are self-clearing when their physical condition goes away. `Cmd_Reset` resets production counters, not live alarms.
+
+## 8. Production counting and KPIs
