@@ -330,3 +330,176 @@ Each test runs with the program downloaded to PLCSIM and the CPU in RUN. Field d
 Tests 7, 8, 9, and 13 were added for this machine version: the equipment interlock and inverter fault. In a real project, tests involving safeguarding or electrical power require controlled procedures and qualified people; do not use forced simulated inputs as real safety validation.
 
 ## 13. Operation and maintenance
+
+This section is written for the person who operates or maintains the machine, not for its original builder. It remains a learning/design description only. Real operation, maintenance, isolation, emergency recovery, and safety testing must use employer-approved procedures and competent authorized personnel.
+
+### 13.1 Start-up procedure
+
+1. Check the machine is clear of loads, tools, and people. Close all guards.
+2. Turn the main isolator `-Q0` to ON.
+3. Check emergency stop `-S1` is released (pulled out).
+4. Press safety reset `-S4`. The safety relay picks up; the emergency-stop alarm clears.
+5. Check the beacon is off and the panel shows no alarm.
+6. Set belt speed on `-R1`.
+7. Confirm the downstream transport is available and signalling ready.
+8. Select AUTO.
+9. Press Start `-S2`. Run lamp `-H3` lights and the belt runs.
+10. Release one load through the sorter and confirm it enters the expected lane and is counted.
+
+For a real machine, this is explanatory sequence guidance, not an approved commissioning procedure. A competent engineer must verify guards, safety functions, site rules, and authorization first.
+
+### 13.2 Normal operation
+
+- The machine sorts automatically. The operator watches lane counts, alarm state, and downstream lanes.
+- If a lane backs up, downstream ready drops and the sorter **holds** loads instead of pushing them. The dashboard shows `Interlock_Hold`. This correct process behaviour is not a fault.
+- Rejects are counted but do not stop the machine. A rising reject count commonly means a class sensor needs cleaning or realignment.
+- Reset counters at the start of each shift so throughput and OEE represent that shift.
+
+### 13.3 Normal shutdown
+
+1. Let the belt run clear of loads.
+2. Press Stop `-S3`.
+3. For a longer stop, turn `-Q0` to OFF and lock it if anyone will work on the machine.
+
+On real equipment, use the applicable isolation/lockout procedure; this document does not authorize anyone to enter a guarded area or work on energized electrical systems.
+
+### 13.4 Emergency stop and recovery
+
+1. Press `-S1`. All motion stops immediately and diverters lose power.
+2. Make the machine safe and address the cause.
+3. Clear a partly diverted load by hand only with the isolator locked off if reaching inside is necessary.
+4. Release `-S1`.
+5. Press `-S4` reset. **The machine does not restart on its own**—this is deliberate.
+6. Press Start to resume.
+
+This sequence states intended design behaviour. Emergency intervention and recovery on a real system must be carried out by trained, authorized people under the required safety and lockout rules.
+
+### 13.5 Alarm response
+
+| Alarm | Code | What to check | Action |
+|:--|:--|:--|:--|
+| Emergency stop | 1 | Is `-S1` pressed? Is a wire broken or terminal loose? Has the safety relay dropped? | Follow 13.4. If no button is pressed and the alarm persists, the safety loop has an electrical fault—do not bypass it; call maintenance |
+| Conveyor jam | 2 | Load stuck at the divert junction. Is junction photo-eye `-B5` dirty or misaligned? | Isolate, clear the blockage, clean the sensor lens. The alarm clears itself |
+| Sensor fault | 3 | Two class sensors on together. Usually a dirty lens, misaligned reflector, or load out of shape | Clean and realign class sensors `-B2` to `-B4`. Check load presentation upstream |
+| Inverter fault | 4 | Read the drive display for its fault code. Common causes: overload, overcurrent, overtemperature, motor cable fault | Clear the cause, reset the drive. Recurring trips suggest a mechanical problem or wrongly sized ramp—do not repeatedly reset |
+| Not an alarm: interlock hold | — | Downstream transport is not ready | Check the AGV / RGV / AS-RS. The sorter resumes when ready returns |
+| Not an alarm: rising rejects | — | Loads enter but are not classified | Clean class sensors; check load spacing and orientation upstream |
+
+Never bypass safety devices or electrical protection. In a real installation, only qualified personnel should isolate, diagnose, repair, reset, or verify electrical/safety functions.
+
+### 13.6 Maintenance schedule
+
+| Interval | Task |
+|:--|:--|
+| Daily | Wipe sensor lenses and reflectors. Check beacon and horn work. Confirm reject count is normal for the shift |
+| Weekly | Function-test emergency stop and confirm no restart without reset. Check diverters move freely and fully. Check air pressure and drain filter bowl |
+| Monthly | Check terminal tightness at `-X1`, especially safety terminals 24 to 29. Check belt tension and tracking. Look for heat damage or discolouration in the panel |
+| Annually | Confirm motor protection setting against motor nameplate. Verify drive parameters against commissioning record. Review safety function against current drawings |
+| After any change | Re-run acceptance tests in section 12 that cover the change, and update drawing revision |
+
+Real maintenance intervals, torque checks, safety-function proof tests, and authorization requirements must be set and verified by qualified personnel for the actual machine.
+
+### 13.7 Operation support and troubleshooting
+
+| Symptom | Likely cause | Fix |
+|:--|:--|:--|
+| Belt will not start | Safety monitor low, or an alarm is active | `I0.2` must read 1 and no alarm may be active. Check reset has been pressed |
+| Belt runs but nothing is sorted | Class sensors not triggering, or downstream interlock is holding | Check `I0.4` to `I0.6` react to a load; check `Interlock_Hold` and downstream-ready signal |
+| A diverter never fires | Diverting is inhibited while belt is off, the interlock is holding, or solenoid / relay failed | Start belt first. Check `Interlock_Hold`. Check relay coil and `-K9` |
+| Diverters dead, everything else fine | `-K9` has dropped, so solenoid power is off | Check safety circuit and reset. `-K9` follows safety relay |
+| Counts do not increase | Counting uses rising edge of diverter output, so no pulse means no count | Confirm diverter outputs pulse |
+| Dashboard shows zeros or nonsense | DB1 is still set to optimized access | Turn off “Optimized block access” on DB1, recompile, download again. This is the most common mistake |
+| Gateway cannot connect | PLCSIM not in RUN, or wrong address | Use `127.0.0.1`, rack 0, slot 1, CPU in RUN |
+| Dashboard will not connect | Session id does not match gateway, or broker unreachable | Match session id and check browser can reach broker on WebSocket port |
+| Uptime and OEE never move | Clock memory byte not enabled on CPU | Enable clock memory MB10 in CPU properties, recompile, download |
+
+These troubleshooting notes are for the simulation/design context. Actual electrical fault finding must not be attempted by unqualified people and must follow approved safety controls.
+
+## 14. Limitations and future work
+
+These limits are stated openly because a design document should identify its gaps.
+
+- **Simulation only.** No physical panel has been built and no commissioning has been done. The program is real and runs, but field devices are simulated by forcing inputs.
+- **Safety not formally verified.** Architecture is designed to Category 3 intent under ISO 13849-1. Quantified performance level has not been calculated, and competent safety-engineer review is required before any build.
+- **Servo is design-level only.** Inverter control is implemented and tested. The servo transfer unit is specified and drawn but not programmed.
+- **KPI formulas are simplified.** A production OEE calculation separates planned from unplanned downtime, handles shift patterns and product-specific ideal rates, and takes ideal rate from a recipe rather than a constant.
+- **Counters are 16-bit and volatile.** They roll over at 32767 and reset on a power cycle. A production machine would use 32-bit counters with retentive memory.
+- **No history.** Only live data is available. There is no database and no trend beyond the dashboard’s last 30 samples.
+- **Communication is not secure.** The demonstration uses a public MQTT broker with no authentication or encryption. A plant installation needs a private broker with TLS and accounts, on the plant network behind a firewall.
+- **Single-signal handshake.** The interlock uses one “ready to receive” signal. A full installation adds load-ready, transfer-complete, and timeout with an alarm.
+
+Reasonable next steps, in order: replace the raw S7 link with OPC UA; add a database for history and shift reporting; extend the handshake to the full four-signal sequence with timeout; program the servo transfer unit; route by barcode rather than size. All future real-world changes must be designed, risk assessed, verified, and approved by qualified engineers.
+
+## 15. Glossary
+
+Plain-English definitions of terms used in this document set.
+
+| Term | Meaning |
+|:--|:--|
+| **AGV** | Automated Guided Vehicle. A driverless vehicle that follows a floor route to move loads |
+| **AS/RS** | Automated Storage and Retrieval System: racking, a crane, and the control system that decides each load location |
+| **Actuator** | Anything converting a signal into movement: motor, cylinder, solenoid valve |
+| **Analogue signal** | A value across a range, such as 0 to 10 volts, instead of only on/off |
+| **CE marking** | Manufacturer’s declaration that a product meets applicable European directives and standards |
+| **CPS** | Cyber-Physical System: physical machine plus software model kept in step |
+| **Contactor** | Heavy-duty electrically operated switch designed to switch motor power |
+| **DB / Data block** | PLC memory holding data rather than logic; a global DB can be shared by blocks, HMI, and gateway |
+| **Determinism** | Producing the same result in the same time under the same conditions; why PLCs are used instead of ordinary PCs |
+| **Digital signal** | Signal that is only on or off |
+| **Digital twin** | Screen model of a machine that follows it live |
+| **Diverter** | Device pushing a load off a conveyor into a lane; here an air cylinder driven by solenoid valve |
+| **E-Stop** | Emergency stop: latching red mushroom button intended to remove power to motion immediately |
+| **EPLAN Electric P8** | Electrical-schematic CAD software that generates drawings and reports described in `electrical_design.md` |
+| **FB / Function block** | Reusable PLC block with its own memory, allowing timers and counts to persist between scans |
+| **FC / Function** | Reusable PLC block with no memory; calculates from inputs then forgets |
+| **Fail-safe** | Designed so failure produces the safe result; an NC emergency stop is fail-safe because a broken wire also stops |
+| **HMI** | Human-Machine Interface: operator screen on a machine |
+| **IEC 60204-1** | International standard for electrical equipment of machines |
+| **IEC 61131-3** | International standard defining PLC languages, including Ladder and Structured Text |
+| **IEC 81346** | International standard for device reference designations such as `-B1`, `-K1`, `-Q1` |
+| **Interlock** | Condition that must be satisfied before an action is allowed |
+| **Interposing relay** | Small relay between PLC output and real load so the PLC does not carry load current |
+| **ISO 13849-1** | International standard for safety-related machine-control parts; defines categories and performance levels |
+| **Inverter / VFD** | Variable Frequency Drive: controls AC motor speed by changing supplied-power frequency |
+| **Ladder / LAD** | Graphical PLC language made to resemble relay wiring |
+| **Latching** | Making a momentary button press persist by using an output’s contact to hold the circuit; also seal-in |
+| **MCB** | Miniature Circuit Breaker: trips on overload or short circuit to protect cable |
+| **MQTT** | Lightweight publish/subscribe messaging protocol widely used in industrial IoT |
+| **Material handling** | Moving, storing, and controlling goods in a factory or warehouse |
+| **OB / Organisation block** | PLC block called directly by CPU; OB1 runs every scan |
+| **OEE** | Overall Equipment Effectiveness: Availability × Performance × Quality as one percentage |
+| **OPC UA** | Vendor-neutral industrial communication standard carrying data meaning as well as value |
+| **PE** | Protective Earth: conductor making a fault operate protection rather than leave frame live |
+| **PLC** | Programmable Logic Controller: industrial computer designed to control machines predictably |
+| **PNP sensor** | Sensor switching the positive side and sending 24 V to PLC input; NPN switches negative side and is more common in Japanese equipment |
+| **Photo-electric sensor** | Sensor using a light beam and switching when an object breaks or reflects it |
+| **Proximity sensor** | Sensor detecting a nearby object without contact |
+| **RGV** | Rail Guided Vehicle: AGV-like vehicle on a fixed rail, usually faster and more accurate |
+| **Rising edge** | Instant a signal changes off-to-on, used so one event gives one count |
+| **SCADA** | Supervisory Control and Data Acquisition: system supervising many machines, history, and trends |
+| **SCL / Structured Text** | Text-based PLC language like Pascal, suited to mathematics, loops, and data handling |
+| **STO** | Safe Torque Off: drive input that removes the internal motor torque-producing power path |
+| **Safety relay** | Safety-rated relay designed to monitor itself and require deliberate reset for safety functions |
+| **Scan cycle** | PLC’s repeating loop: read inputs, run program, write outputs, housekeeping |
+| **Sensor** | Device detecting something physical and giving PLC a signal |
+| **Servo** | Motor with position feedback and controller, used where exact stopping position is required |
+| **Solenoid valve** | Electrically operated valve; energizing it directs compressed air to move a cylinder |
+| **Sortation** | Separating a mixed flow of goods into destination-sorted flows |
+| **Stacker crane** | Tall warehouse-aisle machine placing loads into racking and removing them |
+| **Stop category** | How a machine stops: 0 immediate power removal; 1 ramp down then remove power; 2 controlled stop with power on |
+| **Terminal strip** | Numbered panel terminals where wiring is terminated |
+| **Throughput** | Number of loads handled per unit time |
+| **TON** | On-delay timer whose output switches on after input stays on for preset time |
+| **TP** | Pulse timer giving a fixed output pulse regardless of how briefly the input was on |
+| **Tag** | PLC-address name shared by program, drawing, and schedules |
+| **UL 508A** | North American standard for building industrial control panels |
+| **Watch table** | TIA Portal window for monitoring and forcing PLC values; used here to simulate field devices |
+
+## 16. Document control
+
+| Rev | Date | Change | By |
+|:--|:--|:--|:--|
+| 0 | 2026-08-30 | First issue | PSM |
+| 1 | 2026-09-19 | Reframed as material-handling sortation equipment. Added the downstream equipment interlock, inverter run and fault handling, alarm code 4, new DB1 bits at 27.1, 27.2, 27.3 and 30.5, digital-twin framing, lifecycle note, operation and maintenance section, glossary | PSM |
+
+> This retained document-control record describes the source design revision. This rewritten file is an educational aid, not a revised, approved, or certified engineering document.
