@@ -301,3 +301,32 @@ Full analysis, including the stop-category matrix and standards framing, is in `
 Stop categories used are **category 0** for the emergency stop (immediate removal of power to motion) and **category 2** controlled stop for jams, sensor faults, inverter faults, and the process stop. These descriptions explain the design intent only; they are not instructions to install, alter, validate, or bypass safety circuits.
 
 ## 12. Acceptance criteria
+
+Each test runs with the program downloaded to PLCSIM and the CPU in RUN. Field devices are simulated by forcing inputs in a TIA Portal watch table. Every test can be observed in the watch table, gateway console, and dashboard. These are simulation acceptance tests, not a substitute for real-machine electrical, functional, or safety validation.
+
+| # | Test | Method | Pass criteria |
+|:--|:--|:--|:--|
+| 1 | Safety monitor blocks start | Force `I0.2` = 0 | Belt cannot start. `EStop_Active` true, `Alarm_Active` true, `Mode` = 3, alarm code 1 |
+| 2 | Belt latch | `I0.2` = 1, pulse `I0.0` on then off | `Q0.0` and `Q0.6` go true and **stay** true after the button is released |
+| 3 | Speed reference | Set `IW64` = 13824 | `Speed_Actual` ≈ 50. `QW80` follows `IW64` while running |
+| 4 | Speed forced to zero | Stop the belt | `QW80` = 0 |
+| 5 | Sort class 1 | Belt running, downstream ready, pulse `I0.4` | `Q0.1` pulses for ≈ 2 s. `Lane1_Count` +1, `Total_Count` +1 |
+| 6 | Sort class 2 and 3 | Repeat with `I0.5`, `I0.6` | `Q0.2` / `Q0.3` pulse. `Lane2_Count` / `Lane3_Count` +1 |
+| 7 | **Interlock holds a load** | Set `I1.1` = 0 and `Cmd_Downstream_Ready` = 0. Pulse `I0.4` | **No diverter pulse.** `Interlock_Hold` (27.2) true. `Lane1_Count` unchanged |
+| 8 | **Interlock releases** | With the hold set, set `I1.1` = 1 | Diverter pulses, `Interlock_Hold` clears, `Lane1_Count` +1 |
+| 9 | Interlock from the dashboard | With `I1.1` = 0, press **Downstream Ready** on the dashboard | `Cmd_Downstream_Ready` (30.5) set, `Downstream_Ready` (27.3) true, the held load diverts |
+| 10 | Reject count | Set `I0.3` = 1 and hold > 3 s with no class sensor | `Reject_Count` +1 |
+| 11 | Jam alarm | Set `I0.7` = 1 and hold > 5 s | `Jam_Detected` true, `Alarm_Active` true, `Mode` = 3, alarm code 2, beacon flashing, belt stopped. Clears when `I0.7` = 0 |
+| 12 | Sensor conflict alarm | Set `I0.4` and `I0.5` = 1 together | `Alarm_Active` true, alarm code 3 |
+| 13 | **Inverter fault alarm** | Set `I1.0` = 1 | `VFD_Fault` (27.1) true, `Alarm_Active` true, `Mode` = 3, **alarm code 4**, belt command drops. Clears when `I1.0` = 0 |
+| 14 | Beacon flashes, horn steady | During any alarm, watch `Q0.4` and `Q0.5` | `Q0.4` toggles once per second; `Q0.5` steady on |
+| 15 | Remote commands | Press Start, Stop, Reset, AUTO, MANUAL on the dashboard | The matching bit in byte 30 pulses; the PLC acts; the gateway logs each command |
+| 16 | Counter reset | Press Reset with counts non-zero | All counts and time accumulators return to 0. Live alarms are unaffected |
+| 17 | Telemetry integrity | Compare the dashboard against the watch table | Every value matches: counts, mode, speed, OEE, throughput, uptime, alarm code, VFD fault, interlock state |
+| 18 | Digital twin follows the machine | Sort loads while watching the animation | Loads appear, travel, and are diverted into the correct lane; the AGV shows ready or busy; the fault and hold states are drawn |
+| 19 | Gateway resilience | Stop PLCSIM while the gateway runs, then restart it | The gateway reports the lost connection, retries, and resumes publishing without being restarted |
+| 20 | Mode exclusivity | Select AUTO then MANUAL | Only one mode bit is true at a time. `Mode` reads 1 then 2 |
+
+Tests 7, 8, 9, and 13 were added for this machine version: the equipment interlock and inverter fault. In a real project, tests involving safeguarding or electrical power require controlled procedures and qualified people; do not use forced simulated inputs as real safety validation.
+
+## 13. Operation and maintenance
