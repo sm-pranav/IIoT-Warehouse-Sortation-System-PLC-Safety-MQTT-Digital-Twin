@@ -166,3 +166,91 @@ Strip `-X1` is the control panel’s main terminal strip. All field wiring and a
 Terminals 24–29 are safety-circuit wiring. They are separated by a marked barrier to avoid accidental linking during commissioning. This layout is instructional only; physical terminal work needs approved designs and qualified electricians.
 
 ## 5. Device list
+
+This is a design specification. Device references represent the required device class; final selection would be confirmed against the customer’s preferred suppliers during detailed design.
+
+### 5.1 IEC 81346-2 letter codes used
+
+| Code | Meaning | Used for |
+|:--|:--|:--|
+| `-A` | Assembly, subassembly | PLC, signal board, external controller interface |
+| `-B` | Converting an input variable into a signal | Sensors |
+| `-F` | Protection | MCBs, fuses |
+| `-G` | Generating, supplying | Power supply |
+| `-H` | Producing an indication | Beacon, horn, lamp |
+| `-K` | Processing a signal | Relays, contactor, safety relay |
+| `-M` | Providing mechanical energy | Motors |
+| `-Q` | Switching a power circuit | Isolator, motor protection |
+| `-R` | Restricting, stabilising | Potentiometer |
+| `-S` | Converting a manual action into a signal | Pushbuttons, emergency stop |
+| `-T` | Converting energy, transforming | Inverter, servo drive |
+| `-X` | Connecting | Terminal strip |
+| `-Y` | Converting an electrical signal into mechanical movement | Solenoid valves |
+
+### 5.2 Panel devices
+
+| Tag | Device | Specification | Reference | Qty |
+|:--|:--|:--|:--|:--|
+| `-A1` | PLC | S7-1200 CPU 1214C DC/DC/DC, 14 DI / 10 DQ / 2 AI | `6ES7 214-1AG40-0XB0` | 1 |
+| `-A2` | Analogue output signal board | SB 1232 AQ, 1 × 12 bit, gives QW80 | `6ES7 232-4HA30-0XB0` | 1 |
+| `-Q0` | Main isolator | 3-pole, 25 A, lockable in OFF position, door-mounted | — | 1 |
+| `-F1` | MCB | 3-pole, C curve, 16 A, drive feed | — | 1 |
+| `-Q1` | Motor protection | Adjustable 2.5–4 A, matched to `-M1` full-load current | — | 1 |
+| `-F2` | MCB | 2-pole, C curve, 6 A, control-supply primary | — | 1 |
+| `-G1` | Power supply | 400 V AC in, 24 V DC 5 A out, SELV, short-circuit protected | — | 1 |
+| `-F3` … `-F6` | Branch protection | 24 V DC branch MCB / fuse: CPU, field, outputs, safety | — | 4 |
+| `-T1` | Inverter (VFD) | 0.75 kW, 3 × 400 V, V/f with ramp, STO input, fault relay, 0–10 V reference input | — | 1 |
+| `-K0` | Safety relay | Dual-channel, cross-monitored, monitored manual reset, 3 NO safety contacts + 1 NO auxiliary | — | 1 |
+| `-K1` … `-K7` | Interposing relays | 24 V DC coil, 1 NO contact rated 6 A, plug-in base | — | 7 |
+| `-K9` | Safety contactor | 24 V DC coil, 3 NO poles, drives diverter-solenoid supply | — | 1 |
+| `-X1` | Terminal strip | 36 way, 2.5 mm², screw or push-in, marked safety barrier at 24–29 | — | 1 |
+| — | Panel enclosure | IP54 steel, gland plate, PE bar, door-mounted isolator handle | — | 1 |
+
+### 5.3 Field devices
+
+| Tag | Device | Specification | Qty |
+|:--|:--|:--|:--|
+| `-S1` | Emergency stop | Mushroom head, latching, 2 NC positive-opening contacts, IEC 60947-5-5 | 1 |
+| `-S2` | Start pushbutton | Green, 1 NO, flush | 1 |
+| `-S3` | Stop pushbutton | Red, 1 NO, flush (process stop) | 1 |
+| `-S4` | Safety reset | Blue, 1 NO, monitored reset for `-K0` | 1 |
+| `-B1` | Proximity sensor | Inductive, M18, 3-wire PNP NO, 24 V DC | 1 |
+| `-B2` … `-B4` | Photo-electric sensors | Diffuse or through-beam, 3-wire PNP NO, 24 V DC, mounted at three heights | 3 |
+| `-B5` | Photo-electric sensor | Diffuse, 3-wire PNP NO, at divert junction | 1 |
+| `-R1` | Speed potentiometer | 10 kΩ, panel mounted, 0–10 V output | 1 |
+| `-Y1` … `-Y3` | Solenoid valves | 5/2 single solenoid, 24 V DC coil, on diverter cylinders | 3 |
+| `-H1` | Beacon | 24 V DC, amber, flashed at 1 Hz by PLC | 1 |
+| `-H2` | Horn | 24 V DC, panel or machine mounted | 1 |
+| `-H3` | Run lamp | 24 V DC, green | 1 |
+| `-M1` | Belt drive motor | 0.75 kW, 4-pole, 1440 rpm, 400 V, screened cable | 1 |
+| `-A3` | Downstream interface | Volt-free contact from AGV / RGV / AS-RS controller, customer supplied | 1 |
+
+### 5.4 Design option (section 7)
+
+| Tag | Device | Specification | Qty |
+|:--|:--|:--|:--|
+| `-T2` | Servo drive | 400 V, 0.4 kW, STO input, PROFINET or pulse-train command | 1 |
+| `-M2` | Servo motor | With absolute encoder, on transfer / diverter unit | 1 |
+
+## 6. Wire numbering scheme
+
+| Range | Meaning |
+|:--|:--|
+| `1L1` `1L2` `1L3` | Incoming three-phase, before isolator |
+| `2L1` `2L2` `2L3` | After isolator `-Q0` |
+| `3L1` `3L2` `3L3` | After MCB `-F1` |
+| `4U` `4V` `4W` | Drive output to motor, screened cable |
+| `100` | +24 V DC distribution |
+| `200` | 0 V DC distribution |
+| `101` – `104` | Emergency-stop channels 1 and 2 |
+| `110` `111` | Drive STO A and STO B |
+| `112` | `-K0` 23/24 to `-K9` coil |
+| `201` – `210` | Digital inputs `I0.0` – `I1.1` |
+| `301` – `307` | Digital outputs `Q0.0` – `Q0.6` to interposing-relay coils |
+| `311` – `316` | Interposing-relay contacts to final loads |
+| `401` – `404` | Analogue input and output pairs |
+| `PE` | Protective earth |
+
+Control wiring is 1.0 mm². The motor circuit is sized to the drive and motor. PE is sized as required by phase conductors. 0 V is bonded to PE at `-G1` only, establishing one earth reference and preventing circulating current in the panel. This is design information, not field-wiring instruction.
+
+## 7. Drive concept — inverter and servo
