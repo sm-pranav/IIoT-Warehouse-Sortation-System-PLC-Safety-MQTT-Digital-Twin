@@ -103,3 +103,66 @@ An analogue signal carries a value over a range rather than only on/off. Here th
 CPU 1214C spare capacity after this design: 4 digital inputs (`I1.2`–`I1.5`), 3 digital outputs (`Q0.7`, `Q1.0`, `Q1.1`), and 1 analogue input.
 
 ### 3.5 Data interface to the monitoring layer
+
+The field I/O is one interface half. The other is shared data block **DB1 `ConveyorData`**, which is **32 bytes** with non-optimized (standard) block access. The edge gateway reads the entire block by fixed byte offset in one call, so the offsets are a design requirement. The full layout appears in `control_specification.md` section 5 and `README.md`.
+
+| Offset | DB1 name | Related device / signal |
+|:--|:--|:--|
+| 26.7 | `EStop_Active` | `-K0` safety relay dropped, read on `I0.2` |
+| 26.2 | `Jam_Detected` | `-B5` blocked longer than 5 s, `I0.7` |
+| 26.4 / 26.5 / 26.6 | `Sorting_Small` / `_Medium` / `_Large` | Diverters `-Y1` / `-Y2` / `-Y3` active |
+| 27.0 | `Object_Present` | `-B1` entry sensor, `I0.3` |
+| **27.1** | **`VFD_Fault`** | **Inverter `-T1` fault relay 18/28, `I1.0`** |
+| **27.2** | **`Interlock_Hold`** | **Load waiting because `-A3` is not ready** |
+| **27.3** | **`Downstream_Ready`** | **Mirror of `-A3` handshake on `I1.1`** |
+| 28 | `Active_Alarm_Code` | 0 none, 1 E-Stop, 2 jam, 3 sensor conflict, **4 inverter fault** |
+| **30.5** | **`Cmd_Downstream_Ready`** | **Simulated `-A3` ready, written by gateway for demonstration** |
+
+The four bold rows were added in this revision alongside `I1.0`, `I1.1`, and `Q0.6`. They use previously spare bits, so the block remains 32 bytes and no existing offset moves.
+
+## 4. Terminal block schedule — strip `-X1`
+
+Strip `-X1` is the control panel’s main terminal strip. All field wiring and all I/O wiring from `-A1` terminate here. This single location makes wiring, testing, and fault-finding easier.
+
+| Term | Signal | Wire | From (panel side) | To (field / device side) |
+|:--|:--|:--|:--|:--|
+| 1 | +24 V field bus | 100 | `-F4` | Sensor supply, brown cores |
+| 2 | 0 V field bus | 200 | `-G1` 0 V | Sensor common, blue cores |
+| 3 | I0.0 Start | 201 | `-A1` I0.0 | `-S2` pushbutton |
+| 4 | I0.1 Stop | 202 | `-A1` I0.1 | `-S3` pushbutton |
+| 5 | I0.2 Safety healthy | 203 | `-A1` I0.2 | `-K0` 33/34 aux contact |
+| 6 | I0.3 Entry | 204 | `-A1` I0.3 | `-B1` proximity |
+| 7 | I0.4 Class 1 | 205 | `-A1` I0.4 | `-B2` photo-eye |
+| 8 | I0.5 Class 2 | 206 | `-A1` I0.5 | `-B3` photo-eye |
+| 9 | I0.6 Class 3 | 207 | `-A1` I0.6 | `-B4` photo-eye |
+| 10 | I0.7 Jam | 208 | `-A1` I0.7 | `-B5` photo-eye |
+| 11 | I1.0 VFD fault | 209 | `-A1` I1.0 | `-T1` 18/28 fault relay |
+| 12 | I1.1 Downstream ready | 210 | `-A1` I1.1 | `-A3` downstream controller |
+| 13 | Q0.0 Belt run | 301 | `-A1` Q0.0 | `-K1` coil A1 |
+| 14 | Q0.1 Diverter 1 | 302 | `-A1` Q0.1 | `-K2` coil A1 |
+| 15 | Q0.2 Diverter 2 | 303 | `-A1` Q0.2 | `-K3` coil A1 |
+| 16 | Q0.3 Diverter 3 | 304 | `-A1` Q0.3 | `-K4` coil A1 |
+| 17 | Q0.4 Beacon | 305 | `-A1` Q0.4 | `-K5` coil A1 |
+| 18 | Q0.5 Horn | 306 | `-A1` Q0.5 | `-K6` coil A1 |
+| 19 | Q0.6 VFD run | 307 | `-A1` Q0.6 | `-K7` coil A1, contact to `-T1` DI1 |
+| 20 | IW64 AI0 + | 401 | `-A1` AI0 + | `-R1` wiper |
+| 21 | IW64 AI0 M | 402 | `-A1` AI0 M | `-R1` / 0 V |
+| 22 | QW80 AQ0 + | 403 | `-A2` AQ0 + | `-T1` AI1 |
+| 23 | QW80 AQ0 M | 404 | `-A2` AQ0 M | `-T1` AGND |
+| 24 | E-Stop channel 1 out | 101 | `-K0` S11 | `-S1` 11 |
+| 25 | E-Stop channel 1 return | 102 | `-K0` S12 | `-S1` 12 |
+| 26 | E-Stop channel 2 out | 103 | `-K0` S21 | `-S1` 21 |
+| 27 | E-Stop channel 2 return | 104 | `-K0` S22 | `-S1` 22 |
+| 28 | Drive STO A | 110 | `-K0` 14 | `-T1` STO A |
+| 29 | Drive STO B | 111 | 0 V bus | `-T1` STO B |
+| 30 | Diverter 1 valve | 311 | `-K2` contact via `-K9` pole 1 | `-Y1` solenoid |
+| 31 | Diverter 2 valve | 312 | `-K3` contact via `-K9` pole 2 | `-Y2` solenoid |
+| 32 | Diverter 3 valve | 313 | `-K4` contact via `-K9` pole 3 | `-Y3` solenoid |
+| 33 | Beacon | 314 | `-K5` contact | `-H1` beacon |
+| 34 | Horn | 315 | `-K6` contact | `-H2` horn |
+| 35 | Run lamp / line permissive | 316 | `-K1` contact | `-H3` lamp, spare contact to line |
+| 36 | PE | PE | Panel PE bar | Machine frame, motor, gland plate |
+
+Terminals 24–29 are safety-circuit wiring. They are separated by a marked barrier to avoid accidental linking during commissioning. This layout is instructional only; physical terminal work needs approved designs and qualified electricians.
+
+## 5. Device list
