@@ -254,3 +254,124 @@ This is a design specification. Device references represent the required device 
 Control wiring is 1.0 mm². The motor circuit is sized to the drive and motor. PE is sized as required by phase conductors. 0 V is bonded to PE at `-G1` only, establishing one earth reference and preventing circulating current in the panel. This is design information, not field-wiring instruction.
 
 ## 7. Drive concept — inverter and servo
+
+The job description names inverter and servo motor control. This design addresses both at different levels of completion; this difference is made explicit so no reader mistakes a design option for implemented control.
+
+### 7.1 Belt drive by inverter — implemented and tested
+
+The belt uses inverter `-T1` instead of a direct contactor connection for three reasons:
+
+- **Speed is a process variable.** A slower belt handles fragile cartons and gives diverters more time to catch a moving load. A faster belt gives more throughput. The operator sets speed at `-R1`; PLC transfers this value to the drive.
+- **Controlled acceleration.** A ramp prevents direct-on-line starting shock, important where loose loads are on a belt.
+- **Diagnostics.** The drive returns its trip via `I1.0`, so the machine can stop and identify the fault rather than simply fail to move.
+
+| Direction | Signal | Address | Behaviour |
+|:--|:--|:--|:--|
+| PLC → drive | Run command | `Q0.6` via `-K7` to `DI1` | Same run condition as belt |
+| PLC → drive | Speed reference | `QW80` 0–10 V to `AI1` | Follows `IW64` while running, forced to 0 when stopped |
+| Drive → PLC | Fault | `18/28` to `I1.0` | Raises alarm code 4, drops belt, flashes beacon |
+| Safety → drive | STO | `-K0` 14 to `STO A` | Removes motor torque in hardware, independently of software |
+
+This portion is programmed and tested in PLCSIM. Drive fault is exercised by forcing `I1.0`. Simulated input forcing is not validation of a real VFD safety function.
+
+### 7.2 Servo transfer unit — design level only
+
+A pneumatic diverter has fixed motion: it pushes or does not. A servo-driven transfer/diverter provides controlled position and velocity. On a real sorter this allows repeatable load placement rather than a shove, a stroke that changes with load size without mechanical adjustment, and movement synchronized with belt speed to avoid scuffing.
+
+The design includes `-T2` servo drive and `-M2` servo motor with absolute encoder. An absolute encoder knows position at power-up, so daily homing is unnecessary. Command would use PLC PROFINET, or pulse-and-direction for a simpler drive. Servo STO would connect to the same safety relay as belt drive.
+
+**Honest statement of status:** `-T2` and `-M2` appear in `wiring_diagram.svg` inside a dashed *design option* boundary and in section 5.4. They are **not** programmed in PLC simulation. Motion-control tasks—homing, positioning, camming, or gearing to belt speed—are future work normally done through TIA Portal Technology Objects or the equivalent in GX Works. A real servo system needs proper safety design and verification by qualified engineers.
+
+## 8. Siemens ↔ Mitsubishi address mapping
+
+Japanese plants commonly use Mitsubishi as well as Siemens, and Muratec’s job description names both. The sequence control here ports conceptually to Mitsubishi; the table is a translation, not a claim that a Mitsubishi system was built.
+
+| Concept | Siemens S7-1200 (TIA Portal) | Mitsubishi FX / iQ-R (GX Works) | Note |
+|:--|:--|:--|:--|
+| Digital input | `I0.0` … `I1.1` | `X0` … `X11` (octal) | Mitsubishi input numbering is octal, so `I0.7` → `X7` and `I1.0` → `X10` |
+| Digital output | `Q0.0` … `Q0.6` | `Y0` … `Y6` | Same octal numbering |
+| Internal bit | `M0.0`, `M0.1` | `M0`, `M1` | Mitsubishi bits are simple numbered coils |
+| 1 Hz clock bit | `M10.5` from clock byte MB10 | `M8013` (1 s clock special relay) | Both supplied free by CPU |
+| Data word | `DB1.Total_Count` (Int) | `D0` | Siemens DB becomes block of D registers |
+| Data double word | `DB1.Uptime_Seconds` (DInt) | `D18`, `D19` as a 32-bit pair | Mitsubishi 32-bit values occupy two consecutive registers |
+| Real / float | `DB1.OEE` (Real) | `D10`, `D11` float pair | Mitsubishi uses `E` float instructions |
+| Analogue input | `IW64` | Special function module buffer read via `FROM` / `U\G` | Both scale raw count |
+| Analogue output | `QW80` | Special function module buffer write via `TO` / `U\G` | — |
+| On-delay timer | `TON_TIME`, `PT := T#5S` | `OUT T0 K50` (100 ms base) | 50 × 100 ms = 5 s |
+| Pulse timer | `TP`, `PT := T#2s` | Timer plus interlock, or `PLS` with timer | Mitsubishi has no direct TP; pattern is built from a timer |
+| Rising edge | `R_TRIG` | `PLS M0` or `LDP` contact | `LDP` is rising-edge contact |
+| Set / reset coil | `S` / `R` coils | `SET` / `RST` | Same behaviour |
+| Function block with memory | `FB` + instance DB | `FB` with label block, or subroutine with dedicated M/D areas | iQ-R supports IEC-style FBs directly |
+| Structured Text | SCL | ST in GX Works3 | Both follow IEC 61131-3 |
+| Retained memory | DB with retain attribute | Latched relays `M8000`+ range / file registers | — |
+
+**What this means in practice.** The platforms differ in addresses, data organization, and software tools, not in the underlying engineering: start/stop latching, pulse-timed diverters, edge-counted totals, and interlock contacts are analogous. Porting means revising addresses, recreating timer patterns where needed, and re-testing, not redesigning the machine. Siemens code was written; Mitsubishi mapping was studied, but no Mitsubishi project was built on physical hardware.
+
+## 9. Safety and interlocks
+
+> **Safety boundary.** The following is a design explanation, not certified instructions for real electrical or safety equipment. Process logic, PLC alarms, dashboards, and normal stop functions do not replace a qualified safety function. Do not build, alter, validate, defeat, or bypass any safety circuit from this document. A real machine needs qualified safety engineering, risk assessment, calculated performance level, verification, validation, and required legal/customer approvals.
+
+### 9.1 Emergency stop — the fail-safe chain
+
+`-S1` is wired **normally closed (NC)**. The circuit is complete when healthy. Pressing the button, cutting a wire, or loosening a terminal produces the same safe result: a stop. This is the fail-safe principle—the failure direction is the safe direction.
+
+`-S1` has two NC contacts with positive opening. Positive opening means pressing the button mechanically forces contacts apart rather than relying on a spring that could fail. The contacts feed two independent channels to safety relay `-K0`, which cross-monitors them. A channel fault creates a mismatch and `-K0` refuses reset.
+
+`-K0` has two intended actions:
+
+1. It opens contact 13/14, removing **STO** from inverter `-T1`. STO cuts the drive’s internal motor-power path, so motor torque cannot be produced. This does not depend on drive software or a communication link.
+2. It drops contactor `-K9`. `-K9` has three normally open poles in series with all three diverter solenoid valves, so all diverters lose power and nothing can push.
+
+Reset is **monitored and manual** through `-S4`. Releasing `-S1` does not start the machine; a person must deliberately press reset. This avoids restart while another person may still be within a guard. The intent must be independently validated for any real system.
+
+### 9.2 Why the PLC is not in the safety chain
+
+The PLC reads `-K0` auxiliary contact on `I0.2`, raises alarm code 1, drops belt command, and shows status on HMI/dashboard. These are indication and process-control actions, not safety. A standard PLC and software written by one engineer are not a certified safety device, so they must not be relied upon to remove motion. The hardware chain in 9.1 removes motion whether the program works or not.
+
+### 9.3 Standards framing
+
+| Item | Standard | How this design addresses it |
+|:--|:--|:--|
+| Supply disconnection | IEC 60204-1 §5.3 | `-Q0` main isolator, 3-pole, lockable in OFF position |
+| Emergency stop function | IEC 60204-1 §9.2.5.4.2, §10.7 | Latching mushroom device, NC positive-opening, directly wired, reset only by deliberate action |
+| Stop categories | IEC 60204-1 §9.2.2 | Category 0 for emergency stop; category 2 controlled stop for jams and process faults (9.5) |
+| Protection against electric shock | IEC 60204-1 §6, §8 | 24 V DC SELV control circuit, single-point 0 V-to-PE bond, PE bar, screened motor cable |
+| Safety-related control structure | ISO 13849-1 | Sensor `-S1` (2 NC positive opening) → Logic `-K0` (dual-channel, cross-monitored) → Actuators `-T1` STO and `-K9`. Architecture intended to satisfy **Category 3**: one fault does not lose safety function and most faults are detected |
+| Emergency stop device | IEC 60947-5-5 | Mechanical latching, positive opening |
+
+**Limitation, stated plainly.** The structure is designed to Category 3 intent. A **quantified performance level**—PL a-to-e grading based on MTTFd, diagnostic coverage, and common-cause failure scoring—has **not** been calculated or verified. A real machine needs that calculation and competent safety-engineer review before build. The design explains its reasoning; it is not certified.
+
+### 9.4 Equipment interlock — the sorter and downstream transport
+
+This is the interlock between equipment systems required by the role.
+
+**The hazard.** Each outbound lane hands a load to AGV, RGV, or AS/RS equipment. If sorting occurs while that transport is absent, moving, or full, the load can fall or collide with a vehicle. This stops the line, damages equipment/product, and a falling load can affect people safety as well as process performance.
+
+**The interlock.** The downstream controller gives a volt-free ready contact to `I1.1`. Diverter logic is allowed only while that signal is true:
+
+- Class sensor fires **and** downstream ready → diverter pulses for 2 s, lane count increments, normal operation.
+- Class sensor fires **and** downstream **not** ready → no diverter pulse. PLC sets `Interlock_Hold` (`DB1` 27.2) and holds the load. HMI/dashboard publish the reason.
+- Downstream becomes ready → held diverter fires and `Interlock_Hold` clears.
+
+`Downstream_Ready` (`DB1` 27.3) mirrors the live state for display. For demonstration, dashboard can set `Cmd_Downstream_Ready` (`DB1` 30.5); the interlock treats it like `I1.1`, allowing live exercise without forcing PLC input.
+
+**Category of this interlock.** It is a **process interlock**, not a safety function. It protects equipment and product flow through PLC logic. It works alongside, never instead of, the 9.1 hardware emergency-stop chain. Where a larger installation needs to protect a person at a transfer point, it requires safety-rated hardware or safety PLC, like the emergency stop.
+
+**How a real installation would extend it.** A full handshake commonly has three or four signals: *load ready*, *ready to receive*, *transfer complete*, and often *fault / abort*. A timeout is added to prevent indefinite holding without alarm. This project provides the core single “ready to receive” signal only.
+
+### 9.5 Interlock and stop-category matrix
+
+| # | Condition | Detected by | What stops | Stop category | Alarm code | How it resets |
+|:--|:--|:--|:--|:--|:--|:--|
+| 1 | Emergency stop pressed, or safety wire breaks | `-S1` NC loop into `-K0`; PLC monitor `I0.2` | Drive STO removed (no motor torque), `-K9` drops so all diverter solenoids lose power, belt command drops | **0** — immediate power removal to motion | 1 | Release `-S1`, then press `-S4` monitored reset. No automatic restart |
+| 2 | Inverter fault / trip | `-T1` 18/28 into `I1.0` | Belt run command drops, sorting stops, beacon flashes | **2** — controlled stop, power stays on | 4 | Clear drive fault; alarm self-clears when `I1.0` goes low |
+| 3 | Jam at divert junction, sensor blocked > 5 s | `-B5` into `I0.7`, 5 s TON | Belt run command drops, sorting stops | **2** | 2 | Clear blockage; alarm self-clears |
+| 4 | Sensor conflict, two class sensors on together | `-B2` / `-B3` / `-B4` compared in FB4 | Belt run command drops, sorting stops | **2** | 3 | Correct sensor fault; alarm self-clears |
+| 5 | Downstream transport not ready | `-A3` into `I1.1`, or `Cmd_Downstream_Ready` | Diverting only; belt continues, load held, `Interlock_Hold` set | Hold, not a stop | — | Downstream signals ready; hold clears itself |
+| 6 | Process stop pressed | `-S3` into `I0.1` | Belt run command drops | **2** | — | Press `-S2` start |
+| 7 | Load entered but never sorted within 3 s | `-B1` and diverter outputs, timed in FB3 | Nothing stops; load counted as reject | — | — | Not an alarm; count cleared by `Cmd_Reset` |
+| 8 | Belt stopped for any reason | `Q0.0` series condition in FB2 | Diverters inhibited while belt off | Interlock | — | Automatic when belt runs |
+
+Row 1 is hardware. Rows 2–8 are PLC logic. The separation is deliberate: normal logic controls the process, while hardware safety removes hazardous motion independently.
+
+### 9.6 UL, CE, and why standards matter for exported machinery
