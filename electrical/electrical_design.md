@@ -375,3 +375,38 @@ This is the interlock between equipment systems required by the role.
 Row 1 is hardware. Rows 2–8 are PLC logic. The separation is deliberate: normal logic controls the process, while hardware safety removes hazardous motion independently.
 
 ### 9.6 UL, CE, and why standards matter for exported machinery
+
+A machine builder cannot choose one rulebook alone. The same sorter sold into Europe, North America, and Japan must meet different requirements, and much of the impact belongs to electrical design.
+
+- **CE marking (Europe).** Manufacturer declares conformity with applicable directives—for machinery, Machinery Directive plus EMC and Low Voltage where relevant—using harmonised standards such as IEC 60204-1 and ISO 13849-1, compiling a technical file, and issuing Declaration of Conformity. Much of this document forms the electrical part of that file.
+- **UL (North America).** An industrial control panel is generally built to **UL 508A** and listed. This affects assembly SCCR, listed components, wire colour and marking, spacing, and branch-circuit-protection approach compared with European panels.
+- **Japan and elsewhere.** Local requirements and customer standards apply in addition, and large end users frequently impose their own panel and labelling standards.
+
+**Why this is a design problem, not paperwork.** Intended UL listing changes component selection and panel layout, so it must be known before drawings finish. Safety architecture also cannot be delayed: deciding on Category 3 late causes rewiring. Starting with IEC framing makes a drawing package more portable, which is why IEC is referenced throughout while UL and CE are named explicitly. Actual conformity requires qualified review and applicable certification processes.
+
+## 10. CAD intent and deliverables
+
+`wiring_diagram.svg` is a hand-authored vector schematic structured like an EPLAN sheet: border with column/row references; cross-references such as `/C1`; IEC 81346 device tags; wire numbers; terminal cross-references to `-X1`; revision block; standards block; and title block. It opens in a browser and prints legibly at A3.
+
+**Intended production tools: EPLAN Electric P8 and AutoCAD Electrical.** In a real project, this package is the design basis, but CAD drives the output: device list, I/O list, and terminal schedule live in the CAD database, while schematic and reports are generated from it.
+
+| Deliverable | Where it comes from in EPLAN |
+|:--|:--|
+| Control schematic | Drawn on sheet; symbols from IEC symbol library |
+| I/O list (section 3) | PLC data report generated from PLC box and connection points |
+| Terminal schedule (section 4) | Terminal diagram / terminal connection report for strip `-X1` |
+| Device list (section 5) | Parts list and summarised parts list from device database |
+| Wire numbering (section 6) | Automatic connection numbering by defined scheme |
+| Cross-references | Generated automatically from device tags across sheets |
+| Cable and cross-section data | Cable plan once cables are assigned |
+
+**My status with these tools, stated honestly.** I have not used EPLAN Electric P8 or AutoCAD Electrical on a paid project. I studied their sheets and reports and structured this package so drawing and tables use consistent tags, terminals, and wire numbers. The gap is the software experience, not the intended engineering structure, and it is the first training area I would choose. This does not make the package suitable for unsupervised real-world construction.
+
+## 11. Document control
+
+| Rev | Date | Change | By |
+|:--|:--|:--|:--|
+| 0 | 2026-08-30 | First issue: power, safety circuit, PLC I/O, terminal schedule, device list | PSM |
+| 1 | 2026-09-19 | Added `I1.0` VFD fault, `I1.1` downstream ready, `Q0.6` VFD run, `-K9` solenoid contactor, servo option `-T2` / `-M2`, Mitsubishi mapping, interlock and stop-category matrix | PSM |
+
+> This document-control table is retained from the source design. This beginner-friendly rewrite is educational support only; it is not an approved revision, certified drawing, or authorization to build or commission electrical/safety systems.
