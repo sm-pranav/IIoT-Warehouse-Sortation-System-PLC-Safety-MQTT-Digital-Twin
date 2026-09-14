@@ -89,3 +89,83 @@ END_DATA_BLOCK
 
 
 // ============================================================
+// FB3  "ProductionCounter"   (SCL)
+// Counts per lane, rejects, and the live KPIs. Call every scan.
+// ============================================================
+
+FUNCTION_BLOCK "ProductionCounter"
+{ S7_Optimized_Access := 'TRUE' }
+VERSION : 0.2
+
+   VAR_INPUT
+      Enable : Bool;                 // normally TRUE
+      Reset : Bool;                  // zero the counters
+      Divert1 : Bool;                // Q0.1
+      Divert2 : Bool;                // Q0.2
+      Divert3 : Bool;                // Q0.3
+      Entry_Sensor : Bool;           // I0.3
+      Motor_On : Bool;               // Q0.0
+      Speed_Raw : Int;               // IW64, 0..27648
+      OneSec_Clock : Bool;           // M10.5
+      Auto_Mode : Bool;              // M0.0
+      Manual_Mode : Bool;            // M0.1
+      Alarm : Bool;                  // from FB4
+   END_VAR
+
+   VAR
+      Small_Edge : R_TRIG;
+      Medium_Edge : R_TRIG;
+      Large_Edge : R_TRIG;
+      SecEdge : R_TRIG;
+      RejectTimer : TON_TIME;
+      RejectEdge : R_TRIG;
+      RunSeconds : DInt := 0;
+      PlannedSeconds : DInt := 0;
+      AnyDivert : Bool;
+      Availability : Real;
+      Performance : Real;
+      Quality : Real;
+   END_VAR
+
+BEGIN
+
+   IF #Reset THEN
+      "ConveyorData".Total_Count := 0;
+      "ConveyorData".Lane1_Count := 0;
+      "ConveyorData".Lane2_Count := 0;
+      "ConveyorData".Lane3_Count := 0;
+      "ConveyorData".Reject_Count := 0;
+      #RunSeconds := 0;
+      #PlannedSeconds := 0;
+   END_IF;
+
+   // One count per load: the diverter pulse lasts 2 s, so count its rising edge.
+   #Small_Edge(CLK := #Divert1);
+   #Medium_Edge(CLK := #Divert2);
+   #Large_Edge(CLK := #Divert3);
+
+   IF #Small_Edge.Q AND NOT #Reset THEN
+      "ConveyorData".Lane1_Count := "ConveyorData".Lane1_Count + 1;
+   END_IF;
+   IF #Medium_Edge.Q AND NOT #Reset THEN
+      "ConveyorData".Lane2_Count := "ConveyorData".Lane2_Count + 1;
+   END_IF;
+   IF #Large_Edge.Q AND NOT #Reset THEN
+      "ConveyorData".Lane3_Count := "ConveyorData".Lane3_Count + 1;
+   END_IF;
+
+   "ConveyorData".Total_Count := "ConveyorData".Lane1_Count
+                               + "ConveyorData".Lane2_Count
+                               + "ConveyorData".Lane3_Count;
+
+   // Load entered but nothing diverted within 3 s -> reject.
+   #AnyDivert := #Divert1 OR #Divert2 OR #Divert3;
+   #RejectTimer(IN := #Entry_Sensor AND NOT #AnyDivert, PT := T#3S);
+   #RejectEdge(CLK := #RejectTimer.Q);
+   IF #RejectEdge.Q AND NOT #Reset THEN
+      "ConveyorData".Reject_Count := "ConveyorData".Reject_Count + 1;
+   END_IF;
+
+   // Status mirrors. Object_Present, Interlock_Hold and Downstream_Ready
+   // are written by FB2.
+   "ConveyorData".Sorting_Small := #Divert1;
