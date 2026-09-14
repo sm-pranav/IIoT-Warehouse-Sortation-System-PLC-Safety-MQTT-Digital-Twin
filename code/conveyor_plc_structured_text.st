@@ -169,3 +169,70 @@ BEGIN
    // Status mirrors. Object_Present, Interlock_Hold and Downstream_Ready
    // are written by FB2.
    "ConveyorData".Sorting_Small := #Divert1;
+   "ConveyorData".Sorting_Medium := #Divert2;
+   "ConveyorData".Sorting_Large := #Divert3;
+   "ConveyorData".Motor_Running := #Motor_On;
+   "ConveyorData".System_Running := #Motor_On;
+
+   // Time base from the 1 Hz clock bit.
+   #SecEdge(CLK := #OneSec_Clock);
+   IF #SecEdge.Q AND #Enable THEN
+      #PlannedSeconds := #PlannedSeconds + 1;
+      IF #Motor_On THEN
+         #RunSeconds := #RunSeconds + 1;
+      END_IF;
+   END_IF;
+   "ConveyorData".Uptime_Seconds := #RunSeconds;
+
+   "ConveyorData".Speed_Actual :=
+      REAL_TO_INT(INT_TO_REAL(#Speed_Raw) * 100.0 / 27648.0);
+
+   IF #RunSeconds > 0 THEN
+      "ConveyorData".Throughput :=
+         INT_TO_REAL("ConveyorData".Total_Count) / DINT_TO_REAL(#RunSeconds) * 60.0;
+   ELSE
+      "ConveyorData".Throughput := 0.0;
+   END_IF;
+
+   // OEE = availability x performance x quality.
+   IF #PlannedSeconds > 0 THEN
+      #Availability := DINT_TO_REAL(#RunSeconds) / DINT_TO_REAL(#PlannedSeconds);
+   ELSE
+      #Availability := 0.0;
+   END_IF;
+
+   // Ideal rate 0.5 loads/s = one every 2 s = 30 per minute.
+   IF #RunSeconds > 0 THEN
+      #Performance := (INT_TO_REAL("ConveyorData".Total_Count)
+                       / DINT_TO_REAL(#RunSeconds)) / 0.5;
+   ELSE
+      #Performance := 0.0;
+   END_IF;
+   IF #Performance > 1.0 THEN
+      #Performance := 1.0;
+   END_IF;
+
+   IF ("ConveyorData".Total_Count + "ConveyorData".Reject_Count) > 0 THEN
+      #Quality := INT_TO_REAL("ConveyorData".Total_Count)
+                  / INT_TO_REAL("ConveyorData".Total_Count + "ConveyorData".Reject_Count);
+   ELSE
+      #Quality := 1.0;
+   END_IF;
+
+   "ConveyorData".OEE := #Availability * #Performance * #Quality * 100.0;
+
+   // Mode bits -> mode number. Fault wins.
+   IF #Alarm THEN
+      "ConveyorData".Mode := 3;
+   ELSIF #Auto_Mode THEN
+      "ConveyorData".Mode := 1;
+   ELSIF #Manual_Mode THEN
+      "ConveyorData".Mode := 2;
+   ELSE
+      "ConveyorData".Mode := 0;
+   END_IF;
+
+END_FUNCTION_BLOCK
+
+
+// ============================================================
