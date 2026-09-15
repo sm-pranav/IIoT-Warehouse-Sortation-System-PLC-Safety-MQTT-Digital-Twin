@@ -236,3 +236,78 @@ END_FUNCTION_BLOCK
 
 
 // ============================================================
+// FB4  "AlarmHandler"   (SCL)
+// Builds the master alarm flag and the alarm code. Call every scan.
+//
+// Alarms are self-clearing: they drop when the condition goes away.
+// Cmd_Reset clears counters (FB3), not live alarms.
+//
+// The E-Stop input here is the safety relay monitoring contact. The
+// safety relay, not this code, removes motion.
+// ============================================================
+
+FUNCTION_BLOCK "AlarmHandler"
+{ S7_Optimized_Access := 'TRUE' }
+VERSION : 0.2
+
+   VAR_INPUT
+      EStop_NC : Bool;               // I0.2, 1 = safety circuit healthy
+      Jam_Sensor : Bool;             // I0.7
+      Class1_Sensor : Bool;          // I0.4
+      Class2_Sensor : Bool;          // I0.5
+      Class3_Sensor : Bool;          // I0.6
+      Drive_Fault : Bool;            // I1.0, 1 = inverter tripped
+   END_VAR
+
+   VAR
+      JamTimer : TON_TIME;
+      SensorSum : Int;
+      SensorFault : Bool;
+      EStop_Pressed : Bool;
+   END_VAR
+
+BEGIN
+
+   // Wired normally closed, so a pressed button or a broken wire both read FALSE.
+   #EStop_Pressed := NOT #EStop_NC;
+   "ConveyorData".EStop_Active := #EStop_Pressed;
+
+   // A load passing the junction blips the photo-eye, so wait 5 s.
+   #JamTimer(IN := #Jam_Sensor, PT := T#5S);
+   "ConveyorData".Jam_Detected := #JamTimer.Q;
+
+   // Two class sensors at once is impossible for one load.
+   // SCL cannot add booleans, so count them with IFs.
+   #SensorSum := 0;
+   IF #Class1_Sensor THEN
+      #SensorSum := #SensorSum + 1;
+   END_IF;
+   IF #Class2_Sensor THEN
+      #SensorSum := #SensorSum + 1;
+   END_IF;
+   IF #Class3_Sensor THEN
+      #SensorSum := #SensorSum + 1;
+   END_IF;
+   #SensorFault := (#SensorSum >= 2);
+
+   "ConveyorData".VFD_Fault := #Drive_Fault;
+
+   "ConveyorData".Alarm_Active := #EStop_Pressed
+                                  OR "ConveyorData".Jam_Detected
+                                  OR #SensorFault
+                                  OR #Drive_Fault;
+
+   // Highest priority first.
+   IF #EStop_Pressed THEN
+      "ConveyorData".Active_Alarm_Code := 1;
+   ELSIF "ConveyorData".Jam_Detected THEN
+      "ConveyorData".Active_Alarm_Code := 2;
+   ELSIF #SensorFault THEN
+      "ConveyorData".Active_Alarm_Code := 3;
+   ELSIF #Drive_Fault THEN
+      "ConveyorData".Active_Alarm_Code := 4;
+   ELSE
+      "ConveyorData".Active_Alarm_Code := 0;
+   END_IF;
+
+END_FUNCTION_BLOCK
