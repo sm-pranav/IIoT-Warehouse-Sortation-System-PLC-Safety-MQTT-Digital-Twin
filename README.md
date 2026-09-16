@@ -60,3 +60,148 @@ In the design, the emergency stop uses normally closed wiring through a **safety
 
 The design is framed around **IEC 60204-1** and **ISO 13849-1**. The emergency stop is a category 0 stop. Process faults are controlled category 2 stops. Read `electrical/electrical_design.md` for the safety reasoning, equipment interlock, and stop-category matrix.
 
+
+## Simulation only, and what that means for the drawings
+
+The S7-1200 control logic is real code and it runs in S7-PLCSIM. The field side is simulated: sensors and actuators are represented by values you force in a PLC watch table. You do not need to buy, wire, or connect equipment.
+
+The `electrical/` folder contains **design deliverables**, not construction steps. The wiring diagram, I/O list, terminal schedule, and device list are computer-based engineering documents. They can be reviewed without any physical parts. They show field devices on paper. They are comparable to documents that EPLAN Electric P8 or AutoCAD Electrical can create.
+
+Do not treat these learning documents as authorization to construct or alter a real machine. Real safety and electrical work needs qualified professionals, formal risk assessment, and validated site-specific design.
+
+
+
+| Component | Detail |
+|:--|:--|
+| PLC | Siemens S7-1200, CPU 1214C DC/DC/DC (`6ES7 214-1AG40-0XB0`) |
+| Analog output | SB 1232 AQ signal board (`6ES7 232-4HA30-0XB0`), provides `QW80` |
+| Engineering software | TIA Portal V18 (STEP 7 Professional, optional WinCC Basic) |
+| Simulator | S7-PLCSIM V18 |
+| PLC languages | Ladder (LAD) and Structured Text (SCL), IEC 61131-3 |
+| Gateway | Python 3.10+, `python-snap7`, `paho-mqtt` |
+| Messaging | MQTT via `broker.hivemq.com` (TCP 1883 for Python, WSS 8884 for the browser) |
+| Dashboard | One HTML file using plain HTML/CSS/JavaScript and CDN-hosted `mqtt.js` |
+| Electrical design | Hand-authored SVG schematic plus I/O, terminal, and device tables. Intended CAD tools: EPLAN Electric P8 / AutoCAD Electrical |
+| Standards referenced | IEC 60204-1, ISO 13849-1, IEC 81346-2, IEC 60617, IEC 61131-3. UL 508A and CE are noted for export |
+
+
+
+### I/O and memory
+
+See `electrical/electrical_design.md` for device tags and terminal numbers for every point.
+
+| Address | Tag | Meaning |
+|:--|:--|:--|
+| I0.0 | Start_Button | Start pushbutton |
+| I0.1 | Stop_Button | Stop pushbutton (process stop) |
+| I0.2 | E_Stop | Healthy safety-circuit monitor from the safety relay. `1` = healthy |
+| I0.3 | Sensor_Entry | Load entering the sorter |
+| I0.4 | Sensor_Class1 | Destination class 1 (small) |
+| I0.5 | Sensor_Class2 | Destination class 2 (medium) |
+| I0.6 | Sensor_Class3 | Destination class 3 (large) |
+| I0.7 | Jam_Sensor | Photo-eye at the divert junction |
+| I1.0 | VFD_Fault | Inverter fault. `1` = drive tripped |
+| I1.1 | Downstream_Ready | Handshake from AGV / RGV / AS-RS infeed. `1` = ready |
+| Q0.0 | Conveyor_Motor | Internal belt-run state; run lamp and line permissive |
+| Q0.1 | Diverter_Lane1 | Diverter, lane 1 |
+| Q0.2 | Diverter_Lane2 | Diverter, lane 2 |
+| Q0.3 | Diverter_Lane3 | Diverter, lane 3 |
+| Q0.4 | Alarm_Beacon | Fault beacon; flashes |
+| Q0.5 | Alarm_Horn | Fault horn |
+| Q0.6 | VFD_Run | Run command to the inverter |
+| IW64 | Speed_Setpoint | Speed potentiometer, `0-27648 = 0-10 V` |
+| QW80 | VFD_Speed_Ref | Inverter reference, `0-27648 = 0-10 V` |
+| M0.0 | Mode_Auto | AUTO mode bit |
+| M0.1 | Mode_Manual | MANUAL mode bit |
+| M0.2 | Mode_Fault | FAULT mode bit |
+| M10.5 | Clock_1Hz | 1 Hz clock from clock memory byte MB10 |
+
+`Q0.0` and `Q0.6` come from the same belt-run condition but have different purposes. `Q0.0` is the internal machine state. It drives the run lamp and a permissive contact for a neighbouring conveyor. `Q0.6` is the physical run command that goes to the drive. Keeping them separate makes the drive connection clear in both software and documentation.
+
+### Blocks
+
+| Block | Language | Role |
+|:--|:--|:--|
+| OB1 (Main) | LAD | Calls FB1, FB2, FB3, and FB4 every PLC scan |
+| FB1 ConveyorControl | LAD | Belt latch, modes, speed reference, VFD run, alarm outputs |
+| FB2 SortingLogic | LAD | Object present, downstream interlock, three two-second diverter pulses |
+| FB3 ProductionCounter | SCL | Counts, rejects, OEE, throughput, speed percentage, uptime, mode integer |
+| FB4 AlarmHandler | SCL | Emergency stop, jam, sensor conflict, inverter fault, alarm code |
+| DB1 ConveyorData | data | Shared non-optimized 32-byte data block |
+
+FB3 and FB4 are in `code/conveyor_plc_structured_text.st`. Build the short Ladder blocks as follows.
+
+**FB1 ConveyorControl**
+
+Network 1 is the motor latch. `Conveyor_Motor` turns on when `Start_Button`, `Cmd_Start`, or the `Conveyor_Motor` seal-in contact is true. It can stay on only while `Stop_Button`, `E_Stop`, `Alarm_Active`, and `Cmd_Stop` are all clear. Those four conditions are normally-closed contacts in series.
+
+```text
+   Start_Button      Stop_Button  E_Stop  Alarm_Active  Cmd_Stop   Conveyor_Motor
+ +----| |----+----------|/|--------|/|-------|/|----------|/|---------( )--
+ |           |
+ +--| |------+   Conveyor_Motor (seal-in)
+ +--| |------+   Cmd_Start (remote)
+```
+
+Network 2 handles modes. `Cmd_Mode_Auto` sets `Mode_Auto` and resets `Mode_Manual`. `Cmd_Mode_Manual` does the opposite. `Alarm_Active` drives `Mode_Fault`.
+
+Network 3 handles speed. When `Conveyor_Motor` is on, MOVE `Speed_Setpoint` to `VFD_Speed_Ref`. When it is off, MOVE `0` to `VFD_Speed_Ref`. This prevents the drive from creeping when the belt is stopped.
+
+Network 4 drives alarm outputs. `Alarm_Beacon = Alarm_Active AND Clock_1Hz`, so the beacon flashes once per second. `Alarm_Horn = Alarm_Active`, so the horn stays on while the alarm is active.
+
+Network 5 connects the internal run state to the drive command: `Conveyor_Motor` drives `VFD_Run` (`Q0.6`).
+
+**FB2 SortingLogic**
+
+Use static variables `Ready`, `Req_Lane1`, `Req_Lane2`, and `Req_Lane3`, plus three TP timer instances.
+
+Network 1 copies `Sensor_Entry` into `Object_Present` at DB1 bit `27.0`.
+
+Network 2 creates the handshake. `Downstream_Ready` (`I1.1`) is in parallel with `ConveyorData.Cmd_Downstream_Ready` (`30.5`). Either signal drives the static `Ready` bit and `ConveyorData.Downstream_Ready` (`27.3`) for display. The dashboard can therefore demonstrate the interlock without forcing the physical input.
+
+Networks 3, 5, and 7 are request latches, one for each class. `Sensor_Class1 AND Conveyor_Motor` sets `Req_Lane1`; use the same pattern for classes 2 and 3. The request must latch because a photo-eye sees a load only briefly. The latch keeps the request alive until permission arrives.
+
+Networks 4, 6, and 8 perform the divert action. For lane 1, `Req_Lane1 AND Ready AND Conveyor_Motor` starts a TP timer with `PT := T#2s`. The timer output drives `Diverter_Lane1` and resets `Req_Lane1`.
+
+```text
+  Req_Lane1   Ready   Conveyor_Motor       TP_Class1
+ ----| |------| |---------| |----------[ IN      Q ]-----( )-----
+                                       [ PT=T#2s   ]  Diverter_Lane1
+                                                        ( R ) Req_Lane1
+```
+
+A **TP** timer produces one clean, fixed-duration pulse when its input becomes true. It is appropriate for a diverter because the diverter needs a full two-second kick even when the sensor signal is short. Resetting the request on this rung is safe: after the TP starts, it holds its output for the complete preset time.
+
+Network 9 creates the hold flag. Any `Req_Lane1`, `Req_Lane2`, or `Req_Lane3` in series with a normally-closed `Ready` contact drives `ConveyorData.Interlock_Hold` (`27.2`). In plain words: a load is waiting and downstream permission is absent.
+
+**OB1** calls all four blocks during every scan. FB1 and FB2 read tags and DB1 directly, so they need no parameters. Wire FB3 and FB4 as follows:
+
+- FB3: `Enable`=`TRUE`, `Reset`=`ConveyorData.Cmd_Reset`, `Divert1/2/3`=`Q0.1/Q0.2/Q0.3`, `Entry_Sensor`=`I0.3`, `Motor_On`=`Q0.0`, `Speed_Raw`=`IW64`, `OneSec_Clock`=`M10.5`, `Auto_Mode`=`M0.0`, `Manual_Mode`=`M0.1`, `Alarm`=`ConveyorData.Alarm_Active`.
+- FB4: `EStop_NC`=`I0.2`, `Jam_Sensor`=`I0.7`, `Class1_Sensor`=`I0.4`, `Class2_Sensor`=`I0.5`, `Class3_Sensor`=`I0.6`, `Drive_Fault`=`I1.0`.
+
+### DB1 data layout — the data contract
+
+DB1 is exactly **32 bytes** and must be non-optimized. The gateway reads these offsets exactly, so do not change the variable order. Lane 1 corresponds to class 1, lane 2 to class 2, and lane 3 to class 3.
+
+| Offset | Name | Type | Offset | Name | Type |
+|:--|:--|:--|:--|:--|:--|
+| 0 | Total_Count | Int | 26.0 | Motor_Running | Bool |
+| 2 | Lane1_Count | Int | 26.1 | Alarm_Active | Bool |
+| 4 | Lane2_Count | Int | 26.2 | Jam_Detected | Bool |
+| 6 | Lane3_Count | Int | 26.3 | System_Running | Bool |
+| 8 | Reject_Count | Int | 26.4 | Sorting_Small | Bool |
+| 10 | OEE | Real | 26.5 | Sorting_Medium | Bool |
+| 14 | Throughput | Real | 26.6 | Sorting_Large | Bool |
+| 18 | Uptime_Seconds | DInt | 26.7 | EStop_Active | Bool |
+| 22 | Speed_Actual | Int | 27.0 | Object_Present | Bool |
+| 24 | Mode | Int | 27.1 | VFD_Fault | Bool |
+| 28 | Active_Alarm_Code | Int | 27.2 | Interlock_Hold | Bool |
+| 30.0 | Cmd_Start | Bool | 27.3 | Downstream_Ready | Bool |
+| 30.1 | Cmd_Stop | Bool | 30.3 | Cmd_Mode_Auto | Bool |
+| 30.2 | Cmd_Reset | Bool | 30.4 | Cmd_Mode_Manual | Bool |
+| 30.5 | Cmd_Downstream_Ready | Bool | | | |
+
+`Mode` values are `0 STOP`, `1 AUTO`, `2 MANUAL`, and `3 FAULT`. `Active_Alarm_Code` values are `0 none`, `1 E-Stop`, `2 jam`, `3 sensor fault`, and `4 inverter fault`. Bits `27.4-27.7`, `30.6-30.7`, and byte `31` are spare.
+
+Only `27.1`, `27.2`, `27.3`, and `30.5` were added in this version. Existing offsets remain unchanged, and DB1 is still 32 bytes. Therefore, the gateway still performs one 32-byte read.
+
