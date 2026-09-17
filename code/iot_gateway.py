@@ -148,3 +148,51 @@ def _set_cmd_bit(client, bit, state):
 
 def pulse_command(client, name):
     """Momentary command: set the bit, hold it for a few PLC scans, clear it."""
+    bit = MOMENTARY_BITS[name]
+    _set_cmd_bit(client, bit, True)
+    time.sleep(0.3)
+    _set_cmd_bit(client, bit, False)
+    print(f"[CMD ] Pulsed '{name}'.")
+
+
+def latch_command(client, name, state):
+    """Latched command: leave the bit where the dashboard put it."""
+    bit = LATCHED_BITS[name]
+    _set_cmd_bit(client, bit, bool(state))
+    print(f"[CMD ] Set '{name}' = {bool(state)}.")
+
+
+def handle_command(client, name, state):
+    if name in MOMENTARY_BITS:
+        pulse_command(client, name)
+    elif name in LATCHED_BITS:
+        latch_command(client, name, state)
+    else:
+        print(f"[CMD ] Ignored unknown command '{name}'")
+
+
+# -------------------------------------------------------------
+#  MQTT
+# -------------------------------------------------------------
+def on_connect(client, userdata, flags, rc):
+    if rc == 0:
+        print(f"[MQTT] Connected to {MQTT_BROKER}. Session id = '{SESSION_ID}'")
+        client.subscribe(TOPIC_COMMAND)
+        print(f"[MQTT] Listening for commands on: {TOPIC_COMMAND}")
+    else:
+        print(f"[MQTT] Connect failed with code {rc}")
+
+
+def on_message(client, userdata, msg):
+    """A command arrived from the dashboard."""
+    plc_client = userdata["plc"]
+    try:
+        payload = json.loads(msg.payload.decode("utf-8"))
+        command = str(payload.get("cmd", "")).lower()
+        state = payload.get("state", True)
+        handle_command(plc_client, command, state)
+    except Exception as exc:
+        print(f"[MQTT] Bad command message: {exc}")
+
+
+# -------------------------------------------------------------
