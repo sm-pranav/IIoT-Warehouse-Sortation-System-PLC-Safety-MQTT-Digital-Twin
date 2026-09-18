@@ -196,3 +196,75 @@ def on_message(client, userdata, msg):
 
 
 # -------------------------------------------------------------
+#  MAIN
+# -------------------------------------------------------------
+def main():
+    print("=" * 58)
+    print("  IIoT Sortation Conveyor Gateway   (S7 -> MQTT)")
+    print("=" * 58)
+
+    plc = connect_plc()
+
+    client_id = f"sorter-gw-{uuid.uuid4().hex[:6]}"
+
+    # paho-mqtt 2.x needs a callback API version, 1.x has no such argument.
+    # paho.mqtt.enums only exists in 2.x, so this supports both.
+    try:
+        from paho.mqtt.enums import CallbackAPIVersion
+        mqtt_client = mqtt.Client(callback_api_version=CallbackAPIVersion.VERSION1,
+                                  client_id=client_id, userdata={"plc": plc})
+    except ImportError:
+        mqtt_client = mqtt.Client(client_id=client_id, userdata={"plc": plc})
+
+    mqtt_client.on_connect = on_connect
+    mqtt_client.on_message = on_message
+    mqtt_client.connect(MQTT_BROKER, MQTT_PORT, keepalive=30)
+    mqtt_client.loop_start()
+
+    try:
+        while True:
+            try:
+                sample = read_plc(plc)
+                sample["activity"] = build_activity(sample)
+                mqtt_client.publish(TOPIC_TELEMETRY, json.dumps(sample))
+
+                flag = "ALARM" if sample["alarm_active"] else "ok   "
+                extra = ""
+                if sample["vfd_fault"]:
+                    extra += " VFD-FAULT"
+                if sample["interlock_hold"]:
+                    extra += " HOLD"
+                if sample["downstream_ready"]:
+                    extra += " ds-ready"
+                print(f"[DATA] {flag} mode={sample['mode']:<6} "
+                      f"total={sample['total']:<4} "
+                      f"L1={sample['lane1']} L2={sample['lane2']} "
+                      f"L3={sample['lane3']} rej={sample['reject']} "
+                      f"oee={sample['oee']}% tp={sample['throughput']}ppm"
+                      f"{extra}")
+            except Exception as exc:
+                # Lost the PLC (PLCSIM stopped). Reconnect and carry on.
+                print(f"[PLC ] Read error: {exc}. Reconnecting ...")
+                try:
+                    plc.disconnect()
+                except Exception:
+                    pass
+                plc = connect_plc()
+                mqtt_client.user_data_set({"plc": plc})
+
+            time.sleep(PUBLISH_PERIOD)
+
+    except KeyboardInterrupt:
+        print("\n[EXIT] Stopping gateway ...")
+    finally:
+        mqtt_client.loop_stop()
+        mqtt_client.disconnect()
+        try:
+            plc.disconnect()
+        except Exception:
+            pass
+        print("[EXIT] Clean shutdown. Bye.")
+
+
+if __name__ == "__main__":
+    main()
