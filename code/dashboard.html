@@ -398,3 +398,203 @@ function update(d){
   const tot = Math.max(1, Number(d.total)||0);
   setBar("bar-total", 100);
   setBar("bar-l1", (d.lane1||0)/tot*100);
+  setBar("bar-l2", (d.lane2||0)/tot*100);
+  setBar("bar-l3", (d.lane3||0)/tot*100);
+  setBar("bar-rej", (d.reject||0)/Math.max(1,(d.total||0)+(d.reject||0))*100);
+
+  // --- gauges ---
+  gauge.oee.tgt   = Math.max(0, Math.min(100, Number(d.oee)||0));
+  gauge.speed.tgt = Math.max(0, Math.min(100, Number(d.speed)||0));
+
+  // --- throughput + uptime ---
+  tweenText("throughput", (Number(d.throughput)||0).toFixed(1));
+  $("uptime").textContent = formatUptime(d.uptime);
+
+  // --- mode pill ---
+  const mode = d.mode || "STOP";
+  const pill = $("mode");
+  pill.textContent = mode;
+  pill.className = "mode-pill mode-" + mode;
+  $("activity").textContent = d.activity || "Idle";
+
+  // --- equipment lamps ---
+  setLamp("lamp-vfd", "vfdState",
+    d.vfd_fault ? "FAULT" : (d.motor_running ? "RUNNING" : "STOPPED"),
+    d.vfd_fault ? "bad" : (d.motor_running ? "ok" : "idle"));
+  setLamp("lamp-ds", "dsState", d.downstream_ready ? "READY" : "NOT READY", d.downstream_ready ? "ok" : "warn");
+  setLamp("lamp-il", "ilState", d.interlock_hold ? "HOLD" : "CLEAR", d.interlock_hold ? "warn" : "ok");
+  setLamp("lamp-safe", "safeState", d.estop ? "E-STOP" : "HEALTHY", d.estop ? "bad" : "ok");
+
+  // --- downstream switch reflects PLC ---
+  dsCmd = !!d.cmd_ds_ready;
+  $("dsSwitch").classList.toggle("on", dsCmd);
+
+  // --- alarm banner ---
+  renderAlarm(d);
+
+  // --- twin + chart ---
+  twinSample(d);
+  history.push(Number(d.throughput)||0);
+  if (history.length > MAX_POINTS) history.shift();
+  drawChart();
+
+  // --- event log transitions ---
+  logTransitions(d);
+  prev = d;
+}
+
+/* count-up helpers ------------------------------------------------ */
+/* One animation per value: a new update cancels the previous loop
+   (via a token) so overlapping tweens can never show a wrong number. */
+const shown = {}, tweenTok = {};
+function tween(id, to){
+  to = Number(to)||0;
+  const from = (id in shown) ? shown[id] : to;
+  shown[id] = to;                                  // latest target is the truth
+  const tok = tweenTok[id] = (tweenTok[id]||0) + 1;
+  const start = performance.now(), dur = 500;
+  function step(now){
+    if (tweenTok[id] !== tok) return;              // superseded by a newer update
+    const p = Math.max(0, Math.min(1,(now-start)/dur));   // clamp 0..1 (never negative)
+    const e = 1-Math.pow(1-p,3);
+    $(id).textContent = Math.round(from + (to-from)*e);
+    if (p<1) requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+}
+function tweenText(id, to){ $(id).textContent = to; }   // throughput already 1-dp
+function setBar(id, pct){ const el=$(id); if(el) el.style.width = Math.max(3,Math.min(100,pct))+"%"; }
+
+function setLamp(cardId, textId, text, cls){
+  $(textId).textContent = text;
+  const card = $(cardId);
+  card.classList.remove("ok","warn","bad");
+  if (cls !== "idle") card.classList.add(cls);
+}
+
+function formatUptime(sec){
+  sec = Number(sec)||0;
+  const h=Math.floor(sec/3600), m=Math.floor((sec%3600)/60), s=sec%60;
+  if (h>0) return `${h}h ${m}m`;
+  if (m>0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+function renderAlarm(d){
+  const b=$("alarmBanner"), active=!!d.alarm_active;
+  b.classList.toggle("on", active); b.classList.toggle("ok", !active);
+  $("alarmIcon").innerHTML = active ? "&#9888;" : "&#10003;";
+  $("alarmText").textContent = active ? (d.alarm_text || ALARM_TEXT[d.alarm_code] || "Alarm") : "No active alarms";
+  $("alarmCode").textContent = active ? ("code " + d.alarm_code) : "";
+}
+
+/* ============================================================
+   EVENT LOG
+   ============================================================ */
+let logN = 0;
+function logEvent(kind, msg){
+  const log=$("log");
+  const empty=log.querySelector(".log-empty"); if (empty) empty.remove();
+  const row=document.createElement("div"); row.className="log-row";
+  const time=new Date().toLocaleTimeString();
+  row.innerHTML = `<span class="t num">${time}</span><span class="d d-${kind}"></span><span>${msg}</span>`;
+  log.prepend(row);
+  while (log.children.length > 40) log.removeChild(log.lastChild);
+  $("logCount").textContent = (++logN);
+}
+function logTransitions(d){
+  if (!prev) { logEvent("info","Telemetry stream started"); return; }
+  if (d.mode !== prev.mode) logEvent(d.mode==="FAULT"?"bad":"info","Mode -> " + d.mode);
+  if (d.alarm_active && !prev.alarm_active) logEvent("bad","ALARM: " + (d.alarm_text||ALARM_TEXT[d.alarm_code]));
+  if (!d.alarm_active && prev.alarm_active) logEvent("ok","Alarm cleared");
+  if (d.interlock_hold && !prev.interlock_hold) logEvent("warn","Interlock HOLD - downstream not ready");
+  if (!d.interlock_hold && prev.interlock_hold) logEvent("ok","Interlock released - load diverted");
+  if (d.downstream_ready && !prev.downstream_ready) logEvent("ok","Downstream vehicle READY");
+  if (!d.downstream_ready && prev.downstream_ready) logEvent("warn","Downstream vehicle NOT ready");
+  if (d.vfd_fault && !prev.vfd_fault) logEvent("bad","Inverter tripped");
+}
+
+/* ============================================================
+   ARC GAUGES (plain canvas)
+   ============================================================ */
+const gauge = {
+  oee:   { cur:0, tgt:0, cv:"gOee",   label:"OEE",  unit:"%" },
+  speed: { cur:0, tgt:0, cv:"gSpeed", label:"SPEED",unit:"%" }
+};
+function gaugeColor(v){ return v>=70 ? "#2fd98a" : v>=40 ? "#f5a524" : "#ff5470"; }
+
+function drawGauge(g){
+  const cv=$(g.cv), ctx=cv.getContext("2d");
+  const W=cv.width, H=cv.height, cx=W/2, cy=H*0.62, r=Math.min(W,H)*0.40;
+  const A0=Math.PI*0.75, A1=Math.PI*2.25;         // 270-degree sweep
+  const val=g.cur, frac=val/100, col=gaugeColor(val);
+  const css = getComputedStyle(document.body);
+  const track = css.getPropertyValue("--line").trim() || "#213347";
+  const text  = css.getPropertyValue("--text").trim() || "#fff";
+  const muted = css.getPropertyValue("--muted").trim() || "#889";
+
+  ctx.clearRect(0,0,W,H);
+  // track
+  ctx.lineWidth=13; ctx.lineCap="round";
+  ctx.strokeStyle=track;
+  ctx.beginPath(); ctx.arc(cx,cy,r,A0,A1); ctx.stroke();
+  // value arc with glow
+  ctx.strokeStyle=col; ctx.shadowColor=col; ctx.shadowBlur=14;
+  ctx.beginPath(); ctx.arc(cx,cy,r,A0,A0+(A1-A0)*frac); ctx.stroke();
+  ctx.shadowBlur=0;
+  // ticks
+  ctx.strokeStyle=track; ctx.lineWidth=2;
+  for (let i=0;i<=10;i++){
+    const a=A0+(A1-A0)*(i/10);
+    ctx.beginPath();
+    ctx.moveTo(cx+Math.cos(a)*(r-11), cy+Math.sin(a)*(r-11));
+    ctx.lineTo(cx+Math.cos(a)*(r-3),  cy+Math.sin(a)*(r-3));
+    ctx.stroke();
+  }
+  // center value
+  ctx.fillStyle=text; ctx.textAlign="center";
+  ctx.font="700 30px Consolas, monospace";
+  ctx.fillText(Math.round(val)+"", cx, cy+6);
+  ctx.fillStyle=muted; ctx.font="600 11px Segoe UI, sans-serif";
+  ctx.fillText(g.unit, cx, cy+24);
+}
+function gaugeLoop(){
+  for (const k in gauge){
+    const g=gauge[k];
+    g.cur += (g.tgt-g.cur)*0.14;
+    if (Math.abs(g.tgt-g.cur)<0.1) g.cur=g.tgt;
+    drawGauge(g);
+  }
+  requestAnimationFrame(gaugeLoop);
+}
+
+/* ============================================================
+   DIGITAL TWIN  (same logic as v1, polished drawing)
+   ============================================================ */
+const TW = {
+  belt:{ x0:50, x1:640, top:92, bot:138, mid:115 },
+  entry:112, station:[260,390,520], laneY:[185,235,285],
+  laneEnd:745, agv:{ x:792, y:208, w:100, h:64 }, rejectX:640
+};
+const twin = { totes:[], arm:[0,0,0], phase:0, loadFlash:0, prev:null, d:null };
+
+function spawnTote(lane){
+  if (twin.totes.length>30) return;
+  twin.totes.push({ lane, x:TW.belt.x0-10-Math.random()*45, y:TW.belt.mid, state:"belt" });
+}
+function twinSample(d){
+  twin.d=d;
+  const counts=[d.lane1|0,d.lane2|0,d.lane3|0,d.reject|0];
+  if (twin.prev){
+    for (let i=0;i<4;i++){
+      let delta=counts[i]-twin.prev[i]; if (delta<0) delta=0;
+      for (let k=0;k<Math.min(delta,6);k++) spawnTote(i===3?0:i+1);
+    }
+  }
+  twin.prev=counts;
+  if (d.sorting_small)  twin.arm[0]=1;
+  if (d.sorting_medium) twin.arm[1]=1;
+  if (d.sorting_large)  twin.arm[2]=1;
+}
+function twinStep(dt){
+  const d=twin.d||{};
