@@ -698,3 +698,96 @@ function twinDraw(){
     ctx.fillText((cnt===undefined?0:cnt)+" loads", sx+86, ly-20);
     if (!ready){
       ctx.strokeStyle="#ff5470"; ctx.lineWidth=2; ctx.setLineDash([5,4]);
+      ctx.beginPath(); ctx.moveTo(sx-16,b.bot+12); ctx.lineTo(sx+16,b.bot+12); ctx.stroke(); ctx.setLineDash([]);
+    }
+  }
+
+  // reject chute
+  ctx.strokeStyle=light?"#9fb4c6":"#44627c"; ctx.lineWidth=1.2; ctx.strokeRect(TW.rejectX-22,306,60,26);
+  ctx.fillStyle=ink; ctx.font="9px Consolas, monospace"; ctx.fillText("REJECT  "+(d.reject===undefined?0:d.reject), TW.rejectX-16, 323);
+
+  // downstream vehicle
+  const a=TW.agv, busy=twin.loadFlash>0.02, col=!ready?"#f5a524":busy?"#39b7ff":"#2fd98a";
+  ctx.fillStyle=light?"#ffffff":"#16232f"; rr(ctx,a.x,a.y,a.w,a.h,8); ctx.fill();
+  ctx.strokeStyle=col; ctx.lineWidth=2; ctx.shadowColor=col; ctx.shadowBlur=ready?12:0;
+  rr(ctx,a.x,a.y,a.w,a.h,8); ctx.stroke(); ctx.shadowBlur=0;
+  ctx.fillStyle=col; ctx.globalAlpha=busy?0.55:0.25; ctx.fillRect(a.x+8,a.y+10,a.w-16,16); ctx.globalAlpha=1;
+  ctx.fillStyle=light?"#9fb4c6":"#33506a";
+  [a.x+20,a.x+a.w-20].forEach((wx)=>{ ctx.beginPath(); ctx.arc(wx,a.y+a.h+6,7,0,Math.PI*2); ctx.fill(); });
+  ctx.strokeStyle=line; ctx.lineWidth=3;
+  ctx.beginPath(); ctx.moveTo(a.x-12,a.y+a.h+15); ctx.lineTo(a.x+a.w+14,a.y+a.h+15); ctx.stroke();
+  ctx.fillStyle=light?"#33506a":"#cfe0ec"; ctx.font="bold 11px Consolas, monospace"; ctx.fillText("AGV / RGV", a.x+16, a.y-24);
+  ctx.fillStyle=ink; ctx.font="9px Consolas, monospace"; ctx.fillText("-A3  DOWNSTREAM", a.x-2, a.y-12);
+  ctx.fillStyle=col; ctx.font="bold 11px Consolas, monospace";
+  ctx.fillText(!ready?"NOT READY":busy?"LOADING":"READY", a.x+18, a.y+a.h+34);
+
+  if (d.interlock_hold){
+    ctx.fillStyle="rgba(245,165,36,0.15)"; rr(ctx,300,8,300,22,5); ctx.fill();
+    ctx.fillStyle="#f5a524"; ctx.font="bold 12px Consolas, monospace"; ctx.fillText("INTERLOCK HOLD - downstream not ready", 312, 24);
+  }
+
+  // loads
+  twin.totes.forEach((t)=>{
+    ctx.fillStyle=LANE_COL[t.lane];
+    rr(ctx,t.x-11,t.y-9,22,18,3); ctx.fill();
+    ctx.strokeStyle="rgba(0,0,0,0.35)"; ctx.lineWidth=1; rr(ctx,t.x-11,t.y-9,22,18,3); ctx.stroke();
+    if (t.held){ ctx.fillStyle="#ff5470"; ctx.font="bold 9px Consolas, monospace"; ctx.fillText("HOLD", t.x-12, t.y-14); }
+  });
+}
+let lastTs=0;
+function twinFrame(ts){
+  const dt=lastTs?Math.min(0.05,(ts-lastTs)/1000):0.016; lastTs=ts;
+  twinStep(dt); twinDraw(); requestAnimationFrame(twinFrame);
+}
+
+/* ============================================================
+   THROUGHPUT CHART + SPARKLINE
+   ============================================================ */
+function drawSeries(cv, data, fill){
+  const ctx=cv.getContext("2d"), W=cv.width, H=cv.height, pad=6;
+  ctx.clearRect(0,0,W,H);
+  if (data.length<2) return;
+  const maxVal=Math.max(10,...data), stepX=(W-pad*2)/(MAX_POINTS-1);
+  const y=(v)=>H-pad-(v/maxVal)*(H-pad*2);
+  const grad=ctx.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0,"rgba(38,224,194,.35)"); grad.addColorStop(1,"rgba(38,224,194,0)");
+  ctx.beginPath();
+  data.forEach((v,i)=>{ const x=pad+i*stepX; i?ctx.lineTo(x,y(v)):ctx.moveTo(x,y(v)); });
+  if (fill){
+    const lastX=pad+(data.length-1)*stepX;
+    ctx.lineTo(lastX,H-pad); ctx.lineTo(pad,H-pad); ctx.closePath();
+    ctx.fillStyle=grad; ctx.fill();
+  }
+  ctx.beginPath();
+  data.forEach((v,i)=>{ const x=pad+i*stepX; i?ctx.lineTo(x,y(v)):ctx.moveTo(x,y(v)); });
+  ctx.strokeStyle="#26e0c2"; ctx.lineWidth=2; ctx.shadowColor="#26e0c2"; ctx.shadowBlur=8; ctx.stroke(); ctx.shadowBlur=0;
+  const lastX=pad+(data.length-1)*stepX, lastY=y(data[data.length-1]);
+  ctx.fillStyle="#26e0c2"; ctx.beginPath(); ctx.arc(lastX,lastY,3,0,Math.PI*2); ctx.fill();
+}
+function drawChart(){ drawSeries($("chart"), history, true); drawSeries($("tpSpark"), history, true); }
+
+/* ============================================================
+   WIRE-UP
+   ============================================================ */
+document.querySelectorAll(".controls button[data-cmd]").forEach((b)=>{
+  b.addEventListener("click", ()=> sendCommand(b.dataset.cmd));
+});
+$("dsSwitch").addEventListener("click", ()=>{
+  dsCmd=!dsCmd;
+  $("dsSwitch").classList.toggle("on", dsCmd);
+  sendCommand("downstream_ready", dsCmd);
+});
+$("connectBtn").addEventListener("click", connect);
+$("themeBtn").addEventListener("click", ()=>{
+  document.body.classList.toggle("light");
+  try { localStorage.setItem("dashTheme", document.body.classList.contains("light")?"light":"dark"); } catch(e){}
+});
+try { if (localStorage.getItem("dashTheme")==="light") document.body.classList.add("light"); } catch(e){}
+
+drawChart();
+requestAnimationFrame(twinFrame);
+requestAnimationFrame(gaugeLoop);
+connect();
+</script>
+</body>
+</html>
