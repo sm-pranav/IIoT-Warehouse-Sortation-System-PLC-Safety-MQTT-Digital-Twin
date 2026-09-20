@@ -205,3 +205,67 @@ DB1 is exactly **32 bytes** and must be non-optimized. The gateway reads these o
 
 Only `27.1`, `27.2`, `27.3`, and `30.5` were added in this version. Existing offsets remain unchanged, and DB1 is still 32 bytes. Therefore, the gateway still performs one 32-byte read.
 
+
+
+```text
+IIoT-Smart-Sortation-Conveyor-S7-1200/
+├── README.md
+├── control_specification.md                # specification, lifecycle, operation, maintenance, glossary
+├── code/
+│   ├── conveyor_plc_structured_text.st     # DB1 + FB3 (counters/KPIs) + FB4 (alarms)
+│   ├── iot_gateway.py                      # reads DB1 over S7 and bridges it to MQTT
+│   └── dashboard.html                      # dashboard + digital twin (open directly)
+└── electrical/
+    ├── wiring_diagram.svg                  # control schematic; opens in a browser
+    └── electrical_design.md                # I/O list, terminal schedule, device list,
+                                            # Mitsubishi map, safety and interlocks
+```
+
+The SCL file contains DB1 and the two Structured Text blocks. Build the two Ladder blocks, FB1 and FB2, the OB1 calls, and the tag table manually in TIA Portal. The required details are listed below.
+
+`control_specification.md` is the functional specification used to create the program. It includes the sequence of operation, alarms, interlocks, acceptance tests, operation guidance, maintenance information, and a glossary. `electrical/electrical_design.md` contains the tables behind the schematic.
+
+
+
+- TIA Portal V18 with STEP 7 Professional and S7-PLCSIM. WinCC Basic is optional because the browser dashboard does not need WinCC.
+- Python 3.10 or later.
+
+```powershell
+pip install python-snap7 paho-mqtt
+```
+
+On Windows, `python-snap7` needs the native `snap7.dll` library. Recent Python packages normally include it. If you see `snap7 library not found`, download snap7 from sourceforge. Take the 64-bit `snap7.dll` from `release\Windows\Win64\` and place it next to `iot_gateway.py` or in `C:\Windows\System32`. The DLL bitness must match the Python installation bitness.
+
+
+
+### 1. Build the PLC program in TIA Portal
+
+1. Create a project and add the CPU 1214C DC/DC/DC (`6ES7 214-1AG40-0XB0`).
+2. Add the SB 1232 AQ signal board. It provides analogue output `QW80`.
+3. In CPU properties, enable the clock memory byte and leave it as MB10. This makes `M10.5` available as a 1 Hz bit.
+4. Create a tag table with every tag in the I/O table, including `I1.0`, `I1.1`, and `Q0.6`.
+5. Create global DB1 named `ConveyorData`. Add variables in the DB1 table order. In its properties, turn off **Optimized block access**. This is required for the Python gateway.
+6. Create SCL blocks FB3 (`ProductionCounter`) and FB4 (`AlarmHandler`). Paste their code from `code/conveyor_plc_structured_text.st`.
+7. Create Ladder blocks FB1 (`ConveyorControl`) and FB2 (`SortingLogic`) and build the networks described above.
+8. In OB1, call FB1, FB2, FB3, and FB4. Accept an instance DB for each block and wire FB3 and FB4 inputs as listed.
+9. Compile the complete program. A successful compile is your first checkpoint before simulation.
+
+### 2. Start the simulation
+
+Start S7-PLCSIM, download the program, and set the simulated CPU to RUN. The expected checkpoint is a green RUN state in PLCSIM.
+
+### 3. Run the gateway
+
+```powershell
+pip install python-snap7 paho-mqtt
+python code/iot_gateway.py
+```
+
+The gateway connects to PLCSIM at `127.0.0.1`, rack `0`, slot `1`. It reads 32 bytes from DB1 and publishes JSON every two seconds to `iiot/conveyor/demo01/telemetry`. It also subscribes to `iiot/conveyor/demo01/cmd`.
+
+A session ID helps separate this demo from other users of the shared broker. Change `SESSION_ID` near the top of the Python file if you need a different one.
+
+### 4. Open the dashboard
+
+Double-click `code/dashboard.html` to open it in a browser. Enter the same session ID used by the gateway and select **Connect**. The status dot should turn green when the dashboard reaches the broker.
+
