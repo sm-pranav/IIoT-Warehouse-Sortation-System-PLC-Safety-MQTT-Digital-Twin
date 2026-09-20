@@ -598,3 +598,103 @@ function twinSample(d){
 }
 function twinStep(dt){
   const d=twin.d||{};
+  const running=!!d.motor_running && !d.vfd_fault;
+  const v=running ? (35+(Number(d.speed)||0)*1.25) : 0;
+  const ready=!!d.downstream_ready;
+  twin.phase+=v*dt;
+  for (let i=0;i<3;i++) twin.arm[i]=Math.max(0,twin.arm[i]-dt*2.0);
+  twin.loadFlash=Math.max(0,twin.loadFlash-dt*1.6);
+  for (let i=twin.totes.length-1;i>=0;i--){
+    const t=twin.totes[i];
+    if (t.state==="belt"){
+      const target=(t.lane===0)?TW.rejectX:TW.station[t.lane-1];
+      if (t.x<target){ t.x=Math.min(target,t.x+v*dt); t.held=false; }
+      else if (t.lane===0){ t.state="fall"; }
+      else if (ready){ t.state="divert"; t.held=false; twin.arm[t.lane-1]=1; }
+      else { t.held=true; }
+    } else if (t.state==="divert"){
+      const ly=TW.laneY[t.lane-1]; t.y=Math.min(ly,t.y+135*dt); if (t.y>=ly) t.state="lane";
+    } else if (t.state==="lane"){
+      t.x+=85*dt; if (t.x>=TW.laneEnd) t.state="load";
+    } else if (t.state==="load"){
+      const cx=TW.agv.x+TW.agv.w/2, cy=TW.agv.y+TW.agv.h/2;
+      const dx=cx-t.x, dy=cy-t.y, dist=Math.hypot(dx,dy);
+      if (dist<6){ twin.totes.splice(i,1); twin.loadFlash=1; continue; }
+      t.x+=(dx/dist)*130*dt; t.y+=(dy/dist)*130*dt;
+    } else if (t.state==="fall"){
+      t.y+=170*dt; if (t.y>360) twin.totes.splice(i,1);
+    }
+  }
+}
+function rr(ctx,x,y,w,h,r){
+  ctx.beginPath();
+  ctx.moveTo(x+r,y); ctx.lineTo(x+w-r,y); ctx.quadraticCurveTo(x+w,y,x+w,y+r);
+  ctx.lineTo(x+w,y+h-r); ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
+  ctx.lineTo(x+r,y+h); ctx.quadraticCurveTo(x,y+h,x,y+h-r);
+  ctx.lineTo(x,y+r); ctx.quadraticCurveTo(x,y,x+r,y); ctx.closePath();
+}
+const LANE_COL=["#6b7b88","#2fd98a","#f5a524","#39b7ff"];
+function twinDraw(){
+  const cv=$("twin"), ctx=cv.getContext("2d");
+  const W=cv.width,H=cv.height,d=twin.d||{},b=TW.belt,ready=!!d.downstream_ready;
+  const light=document.body.classList.contains("light");
+  const ink=light?"#33506a":"#7d97a8", faint=light?"#6b8296":"#3b5670", line=light?"#c3d2df":"#2b445c";
+  ctx.clearRect(0,0,W,H);
+
+  ctx.font="11px Consolas, monospace"; ctx.fillStyle=ink; ctx.textAlign="left";
+  ctx.fillText("DIGITAL TWIN  -  driven live from DB1", 12, 20);
+  ctx.fillText("INFEED", b.x0-38, b.top-8);
+
+  const mode=d.mode||"STOP";
+  const mCol=mode==="FAULT"?"#ff5470":mode==="AUTO"?"#2fd98a":mode==="MANUAL"?"#f5a524":ink;
+  ctx.fillStyle=mCol; ctx.font="bold 12px Consolas, monospace"; ctx.textAlign="right";
+  ctx.fillText("MODE "+mode, W-14, 20); ctx.textAlign="left";
+
+  // belt with gradient
+  const g=ctx.createLinearGradient(0,b.top,0,b.bot);
+  g.addColorStop(0, light?"#dbe6ef":"#22384c"); g.addColorStop(1, light?"#c7d6e3":"#16283a");
+  ctx.fillStyle=g; ctx.fillRect(b.x0,b.top,b.x1-b.x0,b.bot-b.top);
+  ctx.strokeStyle=light?"#9fb4c6":"#33506a"; ctx.lineWidth=1.5; ctx.strokeRect(b.x0,b.top,b.x1-b.x0,b.bot-b.top);
+  ctx.strokeStyle=line; ctx.lineWidth=2;
+  const pitch=26, off=((twin.phase%pitch)+pitch)%pitch;
+  ctx.beginPath();
+  for (let x=b.x0+off;x<b.x1;x+=pitch){ ctx.moveTo(x,b.top+3); ctx.lineTo(x,b.bot-3); }
+  ctx.stroke();
+  [b.x0,b.x1].forEach((x)=>{ ctx.fillStyle=light?"#9fb4c6":"#33506a"; ctx.beginPath(); ctx.arc(x,b.mid,12,0,Math.PI*2); ctx.fill(); });
+
+  if (d.vfd_fault){
+    ctx.fillStyle="rgba(255,84,112,0.20)"; ctx.fillRect(b.x0,b.top,b.x1-b.x0,b.bot-b.top);
+    ctx.fillStyle="#ff5470"; ctx.font="bold 14px Consolas, monospace";
+    ctx.fillText("INVERTER FAULT - BELT STOPPED", b.x0+150, b.mid+5);
+  }
+
+  // entry sensor
+  const entryOn=!!d.object_present;
+  ctx.strokeStyle=entryOn?"#2fd98a":faint; ctx.lineWidth=1.5; ctx.setLineDash([4,3]);
+  ctx.beginPath(); ctx.moveTo(TW.entry,b.top-22); ctx.lineTo(TW.entry,b.bot+12); ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle=entryOn?"#2fd98a":ink; ctx.font="9px Consolas, monospace"; ctx.fillText("-B1 ENTRY",TW.entry-24,b.top-28);
+
+  // diverter stations
+  for (let i=0;i<3;i++){
+    const sx=TW.station[i], ly=TW.laneY[i], active=twin.arm[i]>0.02;
+    ctx.strokeStyle=active?LANE_COL[i+1]:faint; ctx.lineWidth=1.5; ctx.setLineDash([4,3]);
+    ctx.beginPath(); ctx.moveTo(sx,b.top-14); ctx.lineTo(sx,b.bot+8); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle=active?LANE_COL[i+1]:ink; ctx.font="9px Consolas, monospace";
+    ctx.fillText("-B"+(i+2)+" C"+(i+1), sx-16, b.top-44);
+    const ext=6+twin.arm[i]*30;
+    ctx.fillStyle=active?LANE_COL[i+1]:(light?"#9fb4c6":"#44627c");
+    if (active){ ctx.shadowColor=LANE_COL[i+1]; ctx.shadowBlur=12; }
+    rr(ctx,sx-11,b.top-40,22,16,3); ctx.fill();
+    ctx.fillRect(sx-4,b.top-26,8,ext); ctx.shadowBlur=0;
+    ctx.fillStyle=ink; ctx.font="9px Consolas, monospace"; ctx.fillText("-Y"+(i+1), sx+14, b.top-28);
+    ctx.strokeStyle=line; ctx.lineWidth=1.2;
+    ctx.beginPath();
+    ctx.moveTo(sx-14,b.bot); ctx.lineTo(sx-14,ly+14); ctx.lineTo(TW.laneEnd+10,ly+14);
+    ctx.moveTo(sx+14,b.bot); ctx.lineTo(sx+14,ly-14); ctx.lineTo(TW.laneEnd+10,ly-14);
+    ctx.stroke();
+    const cnt=[d.lane1,d.lane2,d.lane3][i];
+    ctx.fillStyle=LANE_COL[i+1]; ctx.font="bold 11px Consolas, monospace"; ctx.fillText("LANE "+(i+1), sx+24, ly-20);
+    ctx.fillStyle=light?"#33506a":"#cfe0ec"; ctx.font="11px Consolas, monospace";
+    ctx.fillText((cnt===undefined?0:cnt)+" loads", sx+86, ly-20);
+    if (!ready){
+      ctx.strokeStyle="#ff5470"; ctx.lineWidth=2; ctx.setLineDash([5,4]);
