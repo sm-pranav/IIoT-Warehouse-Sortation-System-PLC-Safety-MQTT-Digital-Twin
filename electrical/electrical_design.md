@@ -1,4 +1,4 @@
-﻿# Electrical Design — IIoT Smart Sortation Conveyor
+# Electrical Design — IIoT Smart Sortation Conveyor
 
 **Project** Warehouse sortation conveyor feeding a downstream AGV / RGV / AS-RS infeed  
 **Drawing set** `PSM-MHS-001` — control schematic, Rev 1  
@@ -284,7 +284,7 @@ The design includes `-T2` servo drive and `-M2` servo motor with absolute encode
 
 ## 8. Siemens ↔ Mitsubishi address mapping
 
-Japanese plants commonly use Mitsubishi as well as Siemens, and Muratec’s job description names both. The sequence control here ports conceptually to Mitsubishi; the table is a translation, not a claim that a Mitsubishi system was built.
+Japanese plants commonly use Mitsubishi as well as Siemens. The sequence control here ports conceptually to Mitsubishi; the table is a translation, not a claim that a Mitsubishi system was built.
 
 | Concept | Siemens S7-1200 (TIA Portal) | Mitsubishi FX / iQ-R (GX Works) | Note |
 |:--|:--|:--|:--|

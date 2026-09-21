@@ -323,3 +323,6 @@ Other stated limits are:
 
 Useful next development steps, in order, are: replace the PLC link with OPC UA; add a database for shift history; extend the one ready signal to load-ready / ready-to-receive / transfer-complete with a timeout; program the servo transfer; and use barcode-based routing instead of size classes.
 
+
+
+Pranav S M
