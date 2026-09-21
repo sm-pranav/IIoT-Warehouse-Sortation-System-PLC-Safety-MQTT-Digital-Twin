@@ -269,3 +269,57 @@ A session ID helps separate this demo from other users of the shared broker. Cha
 
 Double-click `code/dashboard.html` to open it in a browser. Enter the same session ID used by the gateway and select **Connect**. The status dot should turn green when the dashboard reaches the broker.
 
+
+
+With PLCSIM in RUN, create a watch table containing the tags below. Modify simulated inputs and observe the outputs and DB values. The gateway console and dashboard should show the same state. For the complete test list and pass criteria, see `control_specification.md`.
+
+1. **Enable the safety input.** Set `E_Stop` to `1`. Because this is normally closed monitoring, `1` means the safety circuit is healthy. Checkpoint: the belt cannot start while it is `0`.
+2. **Start the belt.** Set `Start_Button` to `1`, then return it to `0`. Checkpoint: `Conveyor_Motor` and `VFD_Run` become true and remain true. This proves the latch.
+3. **Set the speed.** Set `Speed_Setpoint` to `13824`. Checkpoint: `Speed_Actual` is approximately `50`, and `VFD_Speed_Ref` follows the setpoint while the belt runs.
+4. **Sort a load.** With `Downstream_Ready` at `1`, set `Sensor_Class1` to `1` and then `0`. Checkpoint: `Diverter_Lane1` is true for approximately two seconds; `Lane1_Count` and `Total_Count` both increase by one. Repeat for `Sensor_Class2` and `Sensor_Class3`.
+5. **Hold a load on the interlock.** Set `Downstream_Ready` to `0` and keep `Cmd_Downstream_Ready` clear. Pulse `Sensor_Class1`. Checkpoint: no diverter fires, `Interlock_Hold` becomes true, and no count changes. Set `Downstream_Ready` to `1`. Checkpoint: the diverter pulses, the count rises, and the hold clears.
+6. **Repeat from the dashboard.** With `Downstream_Ready` at `0`, press **Downstream Ready** on the dashboard. Checkpoint: `Cmd_Downstream_Ready` is set, the held load diverts, and the twin vehicle becomes green.
+7. **Make a reject.** Set `Sensor_Entry` to `1` and keep it true for more than three seconds without a class sensor. Checkpoint: `Reject_Count` increases by one.
+8. **Trip the inverter.** Set `VFD_Fault` to `1`. Checkpoint: `ConveyorData.VFD_Fault` is true, `Active_Alarm_Code` is `4`, `Mode` is `3`, the beacon flashes, and the belt stops. Return it to `0`; the alarm should clear.
+9. **Trigger a jam.** Set `Jam_Sensor` to `1` for more than five seconds. Checkpoint: `Jam_Detected` and `Alarm_Active` become true and alarm code `2` appears. Return it to `0`; the alarm should clear.
+10. **Test the emergency-stop reporting path.** Set `E_Stop` to `0`. Checkpoint: the belt stops, `EStop_Active` becomes true, and alarm code `1` appears. On a real machine, the safety relay would already have removed motion through hardware; the PLC only reports this status.
+
+On the dashboard, lane cards and total count should increase as you sort. The digital twin should show loads moving and entering the right lane. The vehicle shows ready or not ready, the interlock tile shows HOLD when a load waits, and the alarm panel shows the active alarm name and code.
+
+
+
+| Symptom | Cause and fix |
+|:--|:--|
+| Dashboard and gateway show only zeros or incorrect values | DB1 is still optimized. Turn off **Optimized block access** on DB1, compile, and download again. |
+| Gateway cannot connect or reports an unreachable peer | PLCSIM is not in RUN, or the communication address is wrong. Use `127.0.0.1`, rack `0`, slot `1`. |
+| Gateway raises `snap7 library not found` on Windows | Put 64-bit `snap7.dll` beside `iot_gateway.py` or in `C:\Windows\System32`. It must match Python bitness. |
+| A diverter never fires | Check three conditions: belt running, downstream handshake high, and request latch set. Check `Interlock_Hold`. |
+| Belt will not start | `E_Stop` must be `1` and no alarm may be active. |
+| Loads count but the twin shows nothing | The twin spawns a load from count changes, so it needs telemetry. Confirm matching session IDs and a green dashboard status dot. |
+| Dashboard status dot stays red | The dashboard session ID must match the gateway session ID. The browser also needs access to `broker.hivemq.com` through WebSocket port `8884`. |
+| Uptime and OEE never move | Clock memory is disabled. Enable MB10, compile, and download again. |
+
+## Portability to Mitsubishi
+
+Japanese plants commonly use Mitsubishi equipment alongside Siemens equipment. `electrical/electrical_design.md` includes a Siemens-to-Mitsubishi address map: Siemens `I` inputs map to `X`, `Q` outputs to `Y`, data blocks to `D` registers, `TON_TIME` to an equivalent timer instruction, and `R_TRIG` to a rising-edge contact.
+
+The logic can be ported conceptually to GX Works because it is standard sequence control. A latching start/stop rung, a timed diverter pulse, edge-counted total, and interlock contact follow the same engineering idea. However, addressing, data organization, and development tools change. Mitsubishi has no direct equivalent of the Siemens TP timer, so rebuild the pulse logic and test it again.
+
+This project provides the Siemens implementation and a studied mapping. It does **not** claim that a Mitsubishi project has been built or tested on real hardware.
+
+
+
+The complete project runs in PLCSIM. Inputs are forced to simulate sensors. It demonstrates control logic, electrical-design documentation, and a data path. It does not demonstrate physical wiring, field commissioning, or real-machine operation.
+
+**The most important limitation:** the safety architecture is designed to the intent of ISO 13849-1 Category 3. It uses a normally closed dual-channel loop, a certified safety relay, STO, and a solenoid contactor as two actuators. However, its **quantified performance level has not been calculated or verified**. This requires MTTFd, diagnostic coverage, common-cause failure scoring, and review by a competent safety engineer before any build. The reasoning is documented; it is not a certification claim.
+
+Other stated limits are:
+
+- The servo transfer unit is specified and drawn but not programmed. Inverter control is implemented; servo control is design-level only.
+- The MQTT connection uses a public broker without authentication or encryption. This is acceptable only for a demo and is unsuitable for a real plant.
+- OEE and throughput formulas are simplified.
+- Counters are 16-bit and reset on a power cycle.
+- There is no historical logging.
+
+Useful next development steps, in order, are: replace the PLC link with OPC UA; add a database for shift history; extend the one ready signal to load-ready / ready-to-receive / transfer-complete with a timeout; program the servo transfer; and use barcode-based routing instead of size classes.
+
